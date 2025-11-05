@@ -70,6 +70,24 @@ struct WordCardView: View {
         }
         .onAppear {
             startTime = Date()
+            #if DEBUG
+            print("[Card] Card appeared: \(word.word) (wid: \(word.id)), isTopCard: \(isTopCard)")
+            #endif
+        }
+        .onChange(of: isTopCard) { newValue in
+            #if DEBUG
+            print("[Card] Card \(word.word) isTopCard changed to: \(newValue)")
+            #endif
+            if newValue {
+                // 当卡片变成顶部卡片时，重置状态
+                startTime = Date()
+                offset = .zero
+                rotation = 0
+                isExpanded = false
+                #if DEBUG
+                print("[Card] Card \(word.word) state reset")
+                #endif
+            }
         }
     }
     
@@ -104,8 +122,20 @@ struct WordCardView: View {
         }
         .contentShape(Rectangle())
         .onTapGesture {
+            #if DEBUG
+            print("[Card] Tap detected on card: \(word.word), isTopCard: \(isTopCard), current isExpanded: \(isExpanded)")
+            #endif
+            guard isTopCard else {
+                #if DEBUG
+                print("[Card] Ignoring tap - not top card")
+                #endif
+                return
+            }
             withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
                 isExpanded.toggle()
+                #if DEBUG
+                print("[Card] Expanded toggled to: \(isExpanded)")
+                #endif
             }
         }
     }

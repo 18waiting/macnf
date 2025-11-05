@@ -22,7 +22,7 @@ struct MainTabView: View {
                 .tag(0)
             
             BookLibraryView(onSelectPack: {
-                appState.hasActiveGoal = true
+                appState.loadDemoDashboard()
             })
             .tabItem {
                 Label("词库", systemImage: "books.vertical.fill")
@@ -51,8 +51,21 @@ struct LearningHomeView: View {
     @State private var showStudyFlow = false
     @State private var showLibrary = false
     
-    private let goal = LearningGoal.example
-    private let task = DailyTask.example
+    // 从数据库读取当前目标和任务
+    private var currentGoal: LearningGoal? {
+        appState.dashboard.goal ?? appState.localDatabase.goals.first(where: { $0.status == .inProgress })
+    }
+    
+    private var todayTask: DailyTask? {
+        if let task = appState.dashboard.todayTask {
+            return task
+        }
+        // 从数据库查找今日任务
+        let today = Calendar.current.startOfDay(for: Date())
+        return appState.localDatabase.tasks.first { task in
+            Calendar.current.isDate(task.date, inSameDayAs: today) && task.status != .completed
+        }
+    }
     
     var body: some View {
         NavigationView {
@@ -76,7 +89,8 @@ struct LearningHomeView: View {
                 .padding(.horizontal, 24)
                 
         
-                if appState.hasActiveGoal {
+                if let goal = currentGoal,
+                   let task = todayTask {
                     QuickProgressCard(goal: goal, task: task)
                 }
                 
@@ -110,15 +124,37 @@ struct LearningHomeView: View {
                 Spacer()
                 
                 VStack(spacing: 12) {
-                    HStack(spacing: 12) {
-                        QuickStatPill(icon: "bolt.fill", label: "已复习", value: "220/400")
-                        QuickStatPill(icon: "timer", label: "今日停留", value: "38分")
+                    if appState.dashboard.quickStats.isEmpty {
+                        Text("暂无学习数据，先挑选词库开始吧。")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(Color.white)
+                            .cornerRadius(12)
+                            .opacity(0.6)
+                    } else {
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                            ForEach(appState.dashboard.quickStats) { stat in
+                                QuickStatPill(icon: stat.icon, label: stat.label, value: stat.value)
+                            }
+                        }
+                        .opacity(appState.hasActiveGoal ? 1 : 0.3)
                     }
-                    .opacity(appState.hasActiveGoal ? 1 : 0.3)
                     
-                    Text("没有学习计划时，会自动带你挑选词库。")
-                        .font(.footnote)
-                        .foregroundColor(.secondary)
+                    if appState.dashboard.tips.isEmpty {
+                        Text("没有学习计划时，会自动带你挑选词库。")
+                            .font(.footnote)
+                            .foregroundColor(.secondary)
+                    } else {
+                        VStack(alignment: .leading, spacing: 4) {
+                            ForEach(appState.dashboard.tips, id: \.self) { tip in
+                                Text("· \(tip)")
+                                    .font(.footnote)
+                                    .foregroundColor(.secondary)
+                            }
+                        }
+                    }
                 }
                 .padding(.bottom, 32)
             }
@@ -139,6 +175,7 @@ struct LearningHomeView: View {
             NavigationView {
                 BookLibraryView(onSelectPack: handleGoalSelection)
             }
+            .environmentObject(appState)
         }
     }
     
@@ -151,7 +188,7 @@ struct LearningHomeView: View {
     }
     
     private func handleGoalSelection() {
-        appState.hasActiveGoal = true
+        appState.loadDemoDashboard()
         showLibrary = false
     }
 }
@@ -227,7 +264,7 @@ struct QuickStatPill: View {
 struct MainTabView_Previews: PreviewProvider {
     static var previews: some View {
         MainTabView()
-            .environmentObject(AppState(hasActiveGoal: true))
+            .environmentObject(AppState(dashboard: .demo))
     }
 }
 

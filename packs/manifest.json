@@ -1,0 +1,50 @@
+{
+  "generated_at": "2025-11-05T02:17:59.805641",
+  "pack_count": 4,
+  "packs": [
+    {
+      "pid": 2001,
+      "title": "CET-4 核心词汇",
+      "version": "1.0.0",
+      "words_count": 5811,
+      "hash": "e391dc64da8b2f11368249ef092df40b9fbfdedf7098ab7cdb1d3e94fe14fb85",
+      "source": "四级词汇闪过.csv",
+      "entries_file": "pack_cet4_manifest.json",
+      "released_at": "2025-11-05",
+      "tags": []
+    },
+    {
+      "pid": 2002,
+      "title": "CET-6 核心词汇",
+      "version": "1.0.0",
+      "words_count": 5343,
+      "hash": "728a0a084069addd46cf0cbee37dff1bb8bb472ba3039ed3c9fcd5ac916e6cfd",
+      "source": "六级词汇闪过.csv",
+      "entries_file": "pack_cet6_manifest.json",
+      "released_at": "2025-11-05",
+      "tags": []
+    },
+    {
+      "pid": 2004,
+      "title": "雅思乱序",
+      "version": "1.0.0",
+      "words_count": 4471,
+      "hash": "a55f4da6989f63c5a2d9ac54965d6ada11eaca125a4d57718d226651fc992ab5",
+      "source": "雅思词汇乱序版.csv",
+      "entries_file": "pack_ielts_manifest.json",
+      "released_at": "2025-11-05",
+      "tags": []
+    },
+    {
+      "pid": 2003,
+      "title": "专八乱序",
+      "version": "1.0.0",
+      "words_count": 5689,
+      "hash": "61b7bfde02ded073ef248e20c2b2b947a584fc67681217d598231fcd69aa614a",
+      "source": "专八词汇乱序版.csv",
+      "entries_file": "pack_p8_manifest.json",
+      "released_at": "2025-11-05",
+      "tags": []
+    }
+  ]
+}

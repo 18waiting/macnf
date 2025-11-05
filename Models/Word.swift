@@ -55,6 +55,33 @@ struct Scene: Codable, Hashable {
     let chinese: String?
 }
 
+// MARK: - JSONL 转换支持
+extension Word {
+    init(record: WordJSONLRecord) {
+        self.id = record.wid
+        self.word = record.w
+        self.phonetic = record.ph
+        self.translations = record.translations.map { Translation(record: $0) }
+        self.phrases = record.phrases.map { Phrase(record: $0) }
+        self.scenes = []
+        self.frequency = nil
+    }
+}
+
+extension Translation {
+    init(record: WordTranslationRecord) {
+        self.partOfSpeech = record.partOfSpeech
+        self.meaning = record.meaning
+    }
+}
+
+extension Phrase {
+    init(record: WordPhraseRecord) {
+        self.english = record.english
+        self.chinese = record.chinese
+    }
+}
+
 // MARK: - 示例数据
 extension Word {
     static let examples: [Word] = [

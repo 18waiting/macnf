@@ -23,50 +23,85 @@ struct StatisticsSummary: Identifiable {
 struct StatisticsView: View {
     @EnvironmentObject var appState: AppState
     
-    private let goal = LearningGoal.example
-    private let task = DailyTask.example
-    private let report = DailyReport.example
+    // 从数据库读取数据
+    private var currentGoal: LearningGoal? {
+        appState.dashboard.goal ?? appState.localDatabase.goals.first(where: { $0.status == .inProgress })
+    }
+    
+    private var todayTask: DailyTask? {
+        if let task = appState.dashboard.todayTask {
+            return task
+        }
+        let today = Calendar.current.startOfDay(for: Date())
+        return appState.localDatabase.tasks.first { task in
+            Calendar.current.isDate(task.date, inSameDayAs: today) && task.status != .completed
+        }
+    }
+    
+    private var latestReport: DailyReport? {
+        appState.dashboard.yesterdayReport ?? appState.localDatabase.reports.last
+    }
     
     private var summaries: [StatisticsSummary] {
-        [
-            StatisticsSummary(
-                icon: "target",
-                title: "学习计划",
-                value: "完成率 \(Int(goal.progress * 100))%",
-                subtitle: "\(goal.packName) · 第 \(goal.currentDay) 天",
-                accentColor: .blue,
-                detail: .plan
-            ),
-            StatisticsSummary(
-                icon: "bolt.fill",
-                title: "今日任务",
-                value: "已完成 \(task.completedExposures) / \(task.totalExposures)",
-                subtitle: "剩余约 \(task.estimatedMinutes) 分钟",
-                accentColor: .green,
-                detail: .todayTask
-            ),
-            StatisticsSummary(
-                icon: "chart.bar.fill",
-                title: "昨日复盘",
-                value: "掌握率 \(Int(report.masteryRate * 100))%",
-                subtitle: "平均停留 \(String(format: "%.1f", report.avgDwellTime))s",
-                accentColor: .purple,
-                detail: .review
+        var items: [StatisticsSummary] = []
+        
+        if let goal = currentGoal {
+            items.append(
+                StatisticsSummary(
+                    icon: "target",
+                    title: "学习计划",
+                    value: "完成率 \(Int((goal.progress * 100).rounded()))%",
+                    subtitle: "\(goal.packName) · 第 \(goal.currentDay) 天",
+                    accentColor: .blue,
+                    detail: .plan
+                )
             )
-        ]
+        }
+        
+        if let task = todayTask {
+            items.append(
+                StatisticsSummary(
+                    icon: "bolt.fill",
+                    title: "今日任务",
+                    value: "已完成 \(task.completedExposures) / \(task.totalExposures)",
+                    subtitle: "剩余约 \(task.estimatedMinutes) 分钟",
+                    accentColor: .green,
+                    detail: .todayTask
+                )
+            )
+        }
+        
+        if let report = latestReport {
+            items.append(
+                StatisticsSummary(
+                    icon: "chart.bar.fill",
+                    title: "昨日复盘",
+                    value: "掌握率 \(Int((report.masteryRate * 100).rounded()))%",
+                    subtitle: "平均停留 \(String(format: "%.1f", report.avgDwellTime))s",
+                    accentColor: .purple,
+                    detail: .review
+                )
+            )
+        }
+        
+        return items
     }
     
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 20) {
-                    ForEach(summaries) { summary in
-                        StatisticsSummaryCard(summary: summary) {
-                            appState.activeStatisticDetail = summary.detail
+                    if summaries.isEmpty {
+                        StatisticsPlaceholder(message: "暂无统计数据，开始学习后解锁")
+                    } else {
+                        ForEach(summaries) { summary in
+                            StatisticsSummaryCard(summary: summary) {
+                                appState.activeStatisticDetail = summary.detail
+                            }
                         }
                     }
                     
-                    QuickTipsCard()
+                    QuickTipsCard(tips: appState.dashboard.tips)
                 }
                 .padding(20)
             }
@@ -77,7 +112,12 @@ struct StatisticsView: View {
             get: { appState.activeStatisticDetail },
             set: { appState.activeStatisticDetail = $0 }
         )) { detail in
-            StatisticsDetailSheet(detail: detail, goal: goal, task: task, report: report)
+            StatisticsDetailSheet(
+                detail: detail,
+                goal: currentGoal,
+                task: todayTask,
+                report: latestReport
+            )
         }
     }
 }
@@ -128,9 +168,9 @@ struct StatisticsSummaryCard: View {
 // MARK: - 详情面板
 struct StatisticsDetailSheet: View {
     let detail: StatisticsDetailDisplay
-    let goal: LearningGoal
-    let task: DailyTask
-    let report: DailyReport
+    let goal: LearningGoal?
+    let task: DailyTask?
+    let report: DailyReport?
     
     @Environment(\.dismiss) private var dismiss
     
@@ -163,113 +203,131 @@ struct StatisticsDetailSheet: View {
     }
     
     private var planDetail: some View {
-        VStack(spacing: 20) {
-            QuickProgressCard(goal: goal, task: task)
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("计划分解")
-                    .font(.headline)
-                
-                DataItem(title: "总词数", value: "\(goal.totalWords)")
-                DataItem(title: "日均新词", value: "\(goal.dailyNewWords)")
-                DataItem(
-                    title: "预计完成",
-                    value: goal.endDate.formatted(date: .abbreviated, time: .omitted)
-                )
+        Group {
+            if let goal = goal, let task = task {
+                VStack(spacing: 20) {
+                    QuickProgressCard(goal: goal, task: task)
+                    
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("计划分解")
+                            .font(.headline)
+                        
+                        DataItem(title: "总词数", value: "\(goal.totalWords)")
+                        DataItem(title: "日均新词", value: "\(goal.dailyNewWords)")
+                        DataItem(
+                            title: "预计完成",
+                            value: goal.endDate.formatted(date: .abbreviated, time: .omitted)
+                        )
+                    }
+                    .padding()
+                    .background(Color.white)
+                    .cornerRadius(16)
+                    .shadow(color: .black.opacity(0.05), radius: 10)
+                }
+            } else {
+                StatisticsPlaceholder(message: "暂无学习计划")
             }
-            .padding()
-            .background(Color.white)
-            .cornerRadius(16)
-            .shadow(color: .black.opacity(0.05), radius: 10)
         }
     }
     
     private var todayTaskDetail: some View {
-        VStack(spacing: 20) {
-            VStack(alignment: .leading, spacing: 16) {
-                Text("今日任务概览")
-                    .font(.headline)
-                
-                VStack(spacing: 12) {
-                    TaskRow(icon: "plus.circle.fill", color: .blue, title: "新词", value: "\(task.newWordsCount) 个")
-                    TaskRow(icon: "arrow.clockwise.circle.fill", color: .orange, title: "复习", value: "\(task.reviewWordsCount) 个")
-                    TaskRow(icon: "eye.fill", color: .purple, title: "总曝光", value: "\(task.totalExposures) 次")
-                    TaskRow(icon: "clock.fill", color: .green, title: "预计时长", value: "约 \(task.estimatedMinutes) 分钟")
+        Group {
+            if let task = task {
+                VStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 16) {
+                        Text("今日任务概览")
+                            .font(.headline)
+                        
+                        VStack(spacing: 12) {
+                            TaskRow(icon: "plus.circle.fill", color: .blue, title: "新词", value: "\(task.newWordsCount) 个")
+                            TaskRow(icon: "arrow.clockwise.circle.fill", color: .orange, title: "复习", value: "\(task.reviewWordsCount) 个")
+                            TaskRow(icon: "eye.fill", color: .purple, title: "总曝光", value: "\(task.totalExposures) 次")
+                            TaskRow(icon: "clock.fill", color: .green, title: "预计时长", value: "约 \(task.estimatedMinutes) 分钟")
+                        }
+                        .padding()
+                        .background(Color.white)
+                        .cornerRadius(16)
+                        .shadow(color: .black.opacity(0.05), radius: 10)
+                        
+                        ProgressView(value: task.progress)
+                            .tint(.green)
+                            .scaleEffect(y: 1.8)
+                            .padding(.horizontal)
+                        
+                        Text("已完成 \(task.completedExposures) 次曝光，剩余 \(task.remainingExposures) 次")
+                            .font(.caption)
+                            .foregroundColor(.secondary)
+                            .padding(.horizontal)
+                    }
+                    
+                    Button {
+                        dismiss()
+                    } label: {
+                        Text("继续学习")
+                            .font(.headline)
+                            .foregroundColor(.white)
+                            .frame(maxWidth: .infinity)
+                            .padding()
+                            .background(
+                                LinearGradient(colors: [Color.green, Color.blue], startPoint: .leading, endPoint: .trailing)
+                            )
+                            .cornerRadius(16)
+                    }
                 }
-                .padding()
-                .background(Color.white)
-                .cornerRadius(16)
-                .shadow(color: .black.opacity(0.05), radius: 10)
-                
-                ProgressView(value: task.progress)
-                    .tint(.green)
-                    .scaleEffect(y: 1.8)
-                    .padding(.horizontal)
-                
-                Text("已完成 \(task.completedExposures) 次曝光，剩余 \(task.remainingExposures) 次")
-                    .font(.caption)
-                    .foregroundColor(.secondary)
-                    .padding(.horizontal)
-            }
-            
-            Button {
-                dismiss()
-            } label: {
-                Text("继续学习")
-                    .font(.headline)
-                    .foregroundColor(.white)
-                    .frame(maxWidth: .infinity)
-                    .padding()
-                    .background(
-                        LinearGradient(colors: [Color.green, Color.blue], startPoint: .leading, endPoint: .trailing)
-                    )
-                    .cornerRadius(16)
+            } else {
+                StatisticsPlaceholder(message: "今日还没有生成任务")
             }
         }
     }
     
     private var reviewDetail: some View {
-        VStack(spacing: 20) {
-            VStack(alignment: .leading, spacing: 12) {
-                Text("昨日复盘")
-                    .font(.headline)
-                
-                LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
-                    DataItem(title: "学习时长", value: report.studyDurationFormatted)
-                    DataItem(title: "总曝光", value: "\(report.totalExposures)")
-                    DataItem(title: "平均停留", value: String(format: "%.1f秒", report.avgDwellTime), highlight: true)
-                    DataItem(title: "掌握率", value: "\(Int(report.masteryRate * 100))%", highlight: true)
+        Group {
+            if let report = report {
+                VStack(spacing: 20) {
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("昨日复盘")
+                            .font(.headline)
+                        
+                        LazyVGrid(columns: [GridItem(.flexible()), GridItem(.flexible())], spacing: 12) {
+                            DataItem(title: "学习时长", value: report.studyDurationFormatted)
+                            DataItem(title: "总曝光", value: "\(report.totalExposures)")
+                            DataItem(title: "平均停留", value: String(format: "%.1f秒", report.avgDwellTime), highlight: true)
+                            DataItem(title: "掌握率", value: "\(Int(report.masteryRate * 100))%", highlight: true)
+                        }
+                        .padding()
+                        .background(Color.white)
+                        .cornerRadius(16)
+                        .shadow(color: .black.opacity(0.05), radius: 10)
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 12) {
+                        Text("困难词 Top 5")
+                            .font(.headline)
+                        
+                        ForEach(Array(report.sortedByDwellTime.prefix(5).enumerated()), id: \.offset) { index, word in
+                            DifficultWordRow(
+                                rank: index + 1,
+                                word: word.word,
+                                swipes: word.swipeIndicator,
+                                time: word.dwellTimeFormatted
+                            )
+                        }
+                    }
+                    
+                    VStack(alignment: .leading, spacing: 8) {
+                        Text("学习建议")
+                            .font(.headline)
+                        SuggestionItem(text: "使用困难词生成AI短文，加深理解。")
+                        SuggestionItem(text: "对停留>5秒的词，明日优先复习 2 次。")
+                        SuggestionItem(text: "保持每天 40 分钟学习节奏，完成复盘。")
+                    }
+                    .padding()
+                    .background(Color.blue.opacity(0.06))
+                    .cornerRadius(16)
                 }
-                .padding()
-                .background(Color.white)
-                .cornerRadius(16)
-                .shadow(color: .black.opacity(0.05), radius: 10)
+            } else {
+                StatisticsPlaceholder(message: "完成一次学习后可查看复盘")
             }
-            
-            VStack(alignment: .leading, spacing: 12) {
-                Text("困难词 Top 5")
-                    .font(.headline)
-                
-                ForEach(Array(report.sortedByDwellTime.prefix(5).enumerated()), id: \.offset) { index, word in
-                    DifficultWordRow(
-                        rank: index + 1,
-                        word: word.word,
-                        swipes: word.swipeIndicator,
-                        time: word.dwellTimeFormatted
-                    )
-                }
-            }
-            
-            VStack(alignment: .leading, spacing: 8) {
-                Text("学习建议")
-                    .font(.headline)
-                SuggestionItem(text: "使用困难词生成AI短文，加深理解。")
-                SuggestionItem(text: "对停留>5秒的词，明日优先复习 2 次。")
-                SuggestionItem(text: "保持每天 40 分钟学习节奏，完成复盘。")
-            }
-            .padding()
-            .background(Color.blue.opacity(0.06))
-            .cornerRadius(16)
         }
     }
     
@@ -287,19 +345,54 @@ struct StatisticsDetailSheet: View {
 
 // MARK: - 快速提示卡片
 struct QuickTipsCard: View {
+    let tips: [String]
+    
     var body: some View {
         VStack(alignment: .leading, spacing: 12) {
             Text("💡 NFwords 提示")
                 .font(.headline)
-            Text("· 右滑越多，AI会减少出现频率\n· 停留时间越长，复习排序越靠前\n· 勾选词库后可随时调整任务量")
-                .font(.callout)
-                .foregroundColor(.secondary)
+            
+            if tips.isEmpty {
+                Text("完成首次学习后，将为你生成针对性的学习建议。")
+                    .font(.callout)
+                    .foregroundColor(.secondary)
+            } else {
+                VStack(alignment: .leading, spacing: 8) {
+                    ForEach(tips, id: \.self) { tip in
+                        Text("· \(tip)")
+                            .font(.callout)
+                            .foregroundColor(.secondary)
+                    }
+                }
+            }
         }
         .padding()
         .frame(maxWidth: .infinity, alignment: .leading)
         .background(Color.white)
         .cornerRadius(18)
         .shadow(color: .black.opacity(0.05), radius: 12, y: 6)
+    }
+}
+
+// MARK: - 占位提示
+struct StatisticsPlaceholder: View {
+    let message: String
+    
+    var body: some View {
+        VStack(spacing: 12) {
+            Image(systemName: "chart.bar")
+                .font(.system(size: 48))
+                .foregroundColor(.blue.opacity(0.6))
+            Text(message)
+                .font(.callout)
+                .foregroundColor(.secondary)
+                .multilineTextAlignment(.center)
+        }
+        .padding()
+        .frame(maxWidth: .infinity)
+        .background(Color.white)
+        .cornerRadius(16)
+        .shadow(color: .black.opacity(0.05), radius: 8, y: 4)
     }
 }
 
@@ -397,7 +490,7 @@ struct StatisticsView_Previews: PreviewProvider {
     static var previews: some View {
         NavigationView {
             StatisticsView()
-                .environmentObject(AppState(hasActiveGoal: true))
         }
+        .environmentObject(AppState(dashboard: .demo))
     }
 }

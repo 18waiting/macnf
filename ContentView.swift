@@ -16,6 +16,134 @@
 import SwiftUI
 import Combine
 
+// MARK: - 主题模式枚举
+enum AppTheme: String, CaseIterable, Identifiable {
+    case system = "system"
+    case light = "light"
+    case dark = "dark"
+    
+    var id: String { rawValue }
+    
+    var displayName: String {
+        switch self {
+        case .system: return "跟随系统"
+        case .light: return "浅色模式"
+        case .dark: return "深色模式"
+        }
+    }
+    
+    var icon: String {
+        switch self {
+        case .system: return "circle.lefthalf.filled"
+        case .light: return "sun.max.fill"
+        case .dark: return "moon.fill"
+        }
+    }
+    
+    var colorScheme: ColorScheme? {
+        switch self {
+        case .system: return nil
+        case .light: return .light
+        case .dark: return .dark
+        }
+    }
+}
+
+// MARK: - 主题管理器
+@MainActor
+final class ThemeManager: ObservableObject {
+    static let shared = ThemeManager()
+    
+    @Published var currentTheme: AppTheme {
+        didSet {
+            saveTheme()
+            #if DEBUG
+            print("[Theme] Theme changed to: \(currentTheme.displayName)")
+            #endif
+        }
+    }
+    
+    private let themeKey = "app_theme_preference"
+    
+    private init() {
+        // 从 UserDefaults 加载保存的主题
+        if let savedTheme = UserDefaults.standard.string(forKey: themeKey),
+           let theme = AppTheme(rawValue: savedTheme) {
+            currentTheme = theme
+            #if DEBUG
+            print("[Theme] Loaded saved theme: \(theme.displayName)")
+            #endif
+        } else {
+            currentTheme = .system
+            #if DEBUG
+            print("[Theme] Using default theme: system")
+            #endif
+        }
+    }
+    
+    // MARK: - Public Methods
+    
+    func setTheme(_ theme: AppTheme) {
+        currentTheme = theme
+    }
+    
+    func cycleTheme() {
+        let themes: [AppTheme] = [.system, .light, .dark]
+        if let currentIndex = themes.firstIndex(of: currentTheme) {
+            let nextIndex = (currentIndex + 1) % themes.count
+            currentTheme = themes[nextIndex]
+        }
+    }
+    
+    // MARK: - Private Methods
+    
+    private func saveTheme() {
+        UserDefaults.standard.set(currentTheme.rawValue, forKey: themeKey)
+        #if DEBUG
+        print("[Theme] Theme saved: \(currentTheme.rawValue)")
+        #endif
+    }
+}
+
+// MARK: - 学习面板数据快照（共享状态）
+struct DashboardSnapshot {
+    var goal: LearningGoal?
+    var todayTask: DailyTask?
+    var yesterdayReport: DailyReport?
+    var quickStats: [QuickStat]
+    var tips: [String]
+    
+    static let empty = DashboardSnapshot(
+        goal: nil,
+        todayTask: nil,
+        yesterdayReport: nil,
+        quickStats: [],
+        tips: []
+    )
+    
+    static let demo = DashboardSnapshot(
+        goal: .example,
+        todayTask: .example,
+        yesterdayReport: .example,
+        quickStats: [
+            QuickStat(icon: "bolt.fill", label: "已复习", value: "220 / 400"),
+            QuickStat(icon: "timer", label: "今日停留", value: "38 分")
+        ],
+        tips: [
+            "右滑越多，AI 会减少出现频率",
+            "停留时间越长，复习排序越靠前",
+            "勾选词库后可随时调整任务量"
+        ]
+    )
+}
+
+struct QuickStat: Identifiable {
+    let id = UUID()
+    let icon: String
+    let label: String
+    let value: String
+}
+
 // MARK: - 全局应用状态
 enum StatisticsDetailDisplay: Int, Identifiable {
     case plan = 1
@@ -27,32 +155,79 @@ enum StatisticsDetailDisplay: Int, Identifiable {
 
 @MainActor
 final class AppState: ObservableObject {
-    @Published var hasActiveGoal: Bool
+    @Published private(set) var hasActiveGoal: Bool
     @Published var activeStatisticDetail: StatisticsDetailDisplay?
+    @Published var dashboard: DashboardSnapshot {
+        didSet {
+            hasActiveGoal = dashboard.goal != nil
+        }
+    }
+    @Published var localDatabase: LocalDatabaseSnapshot
     
-    init(hasActiveGoal: Bool = false) {
-        self.hasActiveGoal = hasActiveGoal
+    init(dashboard: DashboardSnapshot = .demo) {
+        self.dashboard = dashboard
+        self.hasActiveGoal = dashboard.goal != nil
         self.activeStatisticDetail = nil
+        self.localDatabase = .empty
+    }
+
+    func updateGoal(_ goal: LearningGoal?, task: DailyTask?, report: DailyReport?) {
+        dashboard.goal = goal
+        dashboard.todayTask = task
+        dashboard.yesterdayReport = report
+        hasActiveGoal = goal != nil
+    }
+    
+    func updateQuickStats(_ stats: [QuickStat]) {
+        dashboard.quickStats = stats
+    }
+    
+    func updateTips(_ tips: [String]) {
+        dashboard.tips = tips
+    }
+    
+    func resetDashboard() {
+        dashboard = .empty
+    }
+    
+    func loadDemoDashboard() {
+        dashboard = .demo
+    }
+    
+    func updateLocalDatabase(_ transform: (inout LocalDatabaseSnapshot) -> Void) {
+        var snapshot = localDatabase
+        transform(&snapshot)
+        localDatabase = snapshot
     }
 }
 
 struct ContentView: View {
     @State private var hasSeenWelcome = false
     @StateObject private var appState = AppState()
+    @StateObject private var themeManager = ThemeManager.shared
+    @State private var didPreloadWords = false
+    @State private var didBootstrapDatabase = false
     
     var body: some View {
-        if hasSeenWelcome {
-            // 主应用（Tab导航）
-            MainTabView()
-                .environmentObject(appState)
-        } else {
-            // 欢迎页
-            WelcomeView(onContinue: {
-                withAnimation {
-                    hasSeenWelcome = true
-                }
-            })
+        Group {
+            if hasSeenWelcome {
+                // 主应用（Tab导航）
+                MainTabView()
+                    .environmentObject(appState)
+                    .task {
+                        await bootstrapLocalDatabaseIfNeeded()
+                        await preloadWordDataIfNeeded()
+                    }
+            } else {
+                // 欢迎页
+                WelcomeView(onContinue: {
+                    withAnimation {
+                        hasSeenWelcome = true
+                    }
+                })
+            }
         }
+        .preferredColorScheme(themeManager.currentTheme.colorScheme)
     }
 }
 
@@ -132,6 +307,42 @@ struct WelcomeView: View {
     }
 }
 
+// MARK: - 数据预加载
+extension ContentView {
+    @MainActor
+    private func bootstrapLocalDatabaseIfNeeded() async {
+        guard !didBootstrapDatabase else { return }
+        didBootstrapDatabase = true
+        await LocalDatabaseCoordinator.shared.bootstrap(appState: appState)
+    }
+
+    private func preloadWordDataIfNeeded() async {
+        guard !didPreloadWords else { return }
+        didPreloadWords = true
+        do {
+            let cache = try await Task.detached(priority: .background) { () -> [Int: WordCacheRecord] in
+                try WordRepository.shared.preloadIfNeeded(limit: 400)
+                return WordRepository.shared.exportCacheRecords()
+            }.value
+            let slicesLoaded = max(1, (cache.count + 1999) / 2000)
+            await MainActor.run {
+                appState.updateLocalDatabase { snapshot in
+                    snapshot.wordCaches = cache
+                }
+                let stats = [
+                    QuickStat(icon: "book.fill", label: "词条缓存", value: "\(cache.count)"),
+                    QuickStat(icon: "square.stack.3d.up.fill", label: "切片", value: "\(slicesLoaded)")
+                ]
+                appState.updateQuickStats(stats)
+            }
+        } catch {
+            #if DEBUG
+            print("⚠️ 词汇预加载失败: \(error)")
+            #endif
+        }
+    }
+}
+
 // MARK: - 功能行
 struct FeatureRow: View {
     let icon: String
@@ -157,7 +368,7 @@ struct FeatureRow: View {
 struct ContentView_Previews: PreviewProvider {
     static var previews: some View {
         ContentView()
-            .environmentObject(AppState(hasActiveGoal: true))
+            .environmentObject(AppState(dashboard: .demo))
     }
 }
 

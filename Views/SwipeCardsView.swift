@@ -42,27 +42,50 @@ struct SwipeCardsView: View {
                 
                 // Tinder式卡片堆叠（3层）⭐
                 ZStack {
-                    ForEach(Array(viewModel.visibleCards.enumerated()).reversed(), id: \.offset) { index, card in
-                        let cardIndex = index
-                        
-                        WordCardView(
-                            word: card.word,
-                            record: card.record,
-                            isTopCard: cardIndex == 0,
-                            onSwipe: { direction, dwellTime in
-                                viewModel.handleSwipe(
-                                    wordId: card.word.id,
-                                    direction: direction,
-                                    dwellTime: dwellTime
-                                )
-                            }
-                        )
-                        .zIndex(Double(viewModel.visibleCards.count - cardIndex))
-                        .scaleEffect(getScale(for: cardIndex))      // Tinder式缩放
-                        .offset(y: getOffset(for: cardIndex))       // 堆叠偏移
-                        .opacity(getOpacity(for: cardIndex))        // 透明度
-                        .allowsHitTesting(cardIndex == 0)          // 只有顶部可交互
-                        .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.visibleCards.count)
+                    if viewModel.visibleCards.isEmpty {
+                        // 空状态提示
+                        VStack(spacing: 20) {
+                            Image(systemName: "doc.text.magnifyingglass")
+                                .font(.system(size: 60))
+                                .foregroundColor(.white.opacity(0.6))
+                            
+                            Text("正在加载单词...")
+                                .font(.title3)
+                                .foregroundColor(.white)
+                            
+                            Text("如果长时间未加载，请返回检查词库设置")
+                                .font(.callout)
+                                .foregroundColor(.white.opacity(0.7))
+                                .multilineTextAlignment(.center)
+                                .padding(.horizontal, 40)
+                        }
+                    } else {
+                        ForEach(Array(viewModel.visibleCards.enumerated()).reversed(), id: \.element.id) { index, card in
+                            let cardIndex = index
+                            
+                            WordCardView(
+                                word: card.word,
+                                record: card.record,
+                                isTopCard: cardIndex == 0,
+                                onSwipe: { direction, dwellTime in
+                                    #if DEBUG
+                                    print("[SwipeCard] Card \(card.id) swiped, direction: \(direction.rawValue)")
+                                    #endif
+                                    viewModel.handleSwipe(
+                                        wordId: card.word.id,
+                                        direction: direction,
+                                        dwellTime: dwellTime
+                                    )
+                                }
+                            )
+                            .id(card.id)  // 关键修复：使用卡片唯一ID，确保每张卡片有独立的视图实例
+                            .zIndex(Double(viewModel.visibleCards.count - cardIndex))
+                            .scaleEffect(getScale(for: cardIndex))
+                            .offset(y: getOffset(for: cardIndex))
+                            .opacity(getOpacity(for: cardIndex))
+                            .allowsHitTesting(cardIndex == 0)
+                            .animation(.spring(response: 0.4, dampingFraction: 0.8), value: viewModel.visibleCards.count)
+                        }
                     }
                 }
                 .frame(maxWidth: .infinity)
@@ -93,36 +116,21 @@ struct SwipeCardsView: View {
         }
     }
     
-    // MARK: - Tinder式堆叠参数
+    // MARK: - 卡片堆叠参数
     
-    /// 获取卡片缩放比例（Tinder式）
+    /// 获取卡片缩放比例（统一大小）
     private func getScale(for index: Int) -> CGFloat {
-        switch index {
-        case 0: return 1.0      // 当前卡片：原始大小
-        case 1: return 0.95     // 后1张：缩小5%
-        case 2: return 0.90     // 后2张：缩小10%
-        default: return 0.85
-        }
+        return 1.0  // 所有卡片大小一致
     }
     
-    /// 获取卡片偏移量
+    /// 获取卡片偏移量（轻微堆叠效果）
     private func getOffset(for index: Int) -> CGFloat {
-        switch index {
-        case 0: return 0        // 当前卡片：无偏移
-        case 1: return -10      // 后1张：向上偏移10pt
-        case 2: return -20      // 后2张：向上偏移20pt
-        default: return -30
-        }
+        return CGFloat(index) * -5  // 每张卡片向上偏移5pt
     }
     
-    /// 获取卡片透明度
+    /// 获取卡片透明度（统一不透明）
     private func getOpacity(for index: Int) -> Double {
-        switch index {
-        case 0: return 1.0      // 当前卡片：完全可见
-        case 1: return 0.7      // 后1张：70%透明度
-        case 2: return 0.4      // 后2张：40%透明度
-        default: return 0.0
-        }
+        return 1.0  // 所有卡片完全不透明
     }
     
     // MARK: - 子视图
