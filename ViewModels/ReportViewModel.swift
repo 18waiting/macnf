@@ -16,6 +16,9 @@ class ReportViewModel: ObservableObject {
     @Published var isGeneratingAIArticle = false
     @Published var generatedArticles: [ReadingPassage] = []
     
+    // 核心组件 ⭐
+    private let dwellAnalyzer: DwellTimeAnalyzer = DwellTimeAnalyzerFactory.defaultAnalyzer()
+    
     // MARK: - 生成每日报告
     /// 基于当天的学习记录生成报告
     /// - Parameters:
@@ -64,22 +67,36 @@ class ReportViewModel: ObservableObject {
             return createEmptyReport(goal: goal, day: day)
         }
         
-        // 2. 按停留时间降序排序 ⭐ 核心
-        wordSummaries.sort { $0.avgDwellTime > $1.avgDwellTime }
+        // 2. 使用停留时间分析器 ⭐ 核心组件
+        let analysis = dwellAnalyzer.analyze(records) { wid in
+            words.first(where: { $0.id == wid })?.word
+        }
         
-        // 3. 分类：熟悉 vs 需加强
-        let familiarWords = wordSummaries
-            .filter { $0.avgDwellTime < 2.0 }
-            .map { $0.id }
+        #if DEBUG
+        print("[ReportVM] Dwell time analysis:")
+        print(analysis.basicAnalysis.briefSummary)
+        #endif
         
-        let unfamiliarWords = wordSummaries
-            .filter { $0.avgDwellTime >= 5.0 }
-            .map { $0.id }
+        // 3. 转换分析结果为 WordSummary
+        wordSummaries = analysis.sortedWithWords.map { enhanced in
+            WordSummary(
+                id: enhanced.wid,
+                word: enhanced.word,
+                avgDwellTime: enhanced.avgDwellTime,
+                swipeLeftCount: enhanced.swipeLeftCount,
+                swipeRightCount: enhanced.swipeRightCount,
+                totalExposures: enhanced.record.totalExposureCount
+            )
+        }
         
-        // 4. 统计
+        // 4. 分类结果
+        let familiarWords = (analysis.basicAnalysis.veryFamiliar + analysis.basicAnalysis.familiar).map { $0.id }
+        let unfamiliarWords = (analysis.basicAnalysis.unfamiliar + analysis.basicAnalysis.difficult + analysis.basicAnalysis.veryDifficult).map { $0.id }
+        
+        // 5. 统计
         let totalSwipeRight = records.values.reduce(0) { $0 + $1.swipeRightCount }
         let totalSwipeLeft = records.values.reduce(0) { $0 + $1.swipeLeftCount }
-        let avgDwell = wordSummaries.reduce(0.0) { $0 + $1.avgDwellTime } / Double(wordSummaries.count)
+        let avgDwell = analysis.avgDwellTime
         
         // 5. 创建报告
         let report = DailyReport(
@@ -101,10 +118,28 @@ class ReportViewModel: ObservableObject {
         // 6. 保存当前报告
         currentReport = report
         
-        // 7. 打印报告
+        // 7. 自动触发AI短文生成 ⭐ 新增
+        if shouldAutoGenerateAI(analysis: analysis.basicAnalysis) {
+            let difficultWords = analysis.topDifficultWords
+            #if DEBUG
+            print("[ReportVM] Auto-triggering AI generation with \(difficultWords.count) difficult words")
+            #endif
+            
+            Task {
+                await generateAIArticle(for: report, topic: .auto)
+            }
+        }
+        
+        // 8. 打印报告
         printReport(report)
         
         return report
+    }
+    
+    // 判断是否自动生成AI短文
+    private func shouldAutoGenerateAI(analysis: DwellTimeAnalysis) -> Bool {
+        // 困难率>30% 且 困难词≥10个
+        analysis.difficultyRate > 0.3 && (analysis.unfamiliar.count + analysis.difficult.count + analysis.veryDifficult.count) >= 10
     }
     
     // MARK: - 创建空报告
@@ -253,36 +288,5 @@ class ReportViewModel: ObservableObject {
     }
 }
 
-// MARK: - 停留时间范围
-enum DwellTimeRange: String, CaseIterable {
-    case veryFast = "<2s"      // 非常熟悉
-    case fast = "2-5s"         // 基本熟悉
-    case medium = "5-8s"       // 不够熟悉
-    case slow = "8-10s"        // 困难
-    case verySlow = ">10s"     // 极度困难
-    
-    static func fromDwellTime(_ time: Double) -> DwellTimeRange {
-        switch time {
-        case 0..<2.0: return .veryFast
-        case 2.0..<5.0: return .fast
-        case 5.0..<8.0: return .medium
-        case 8.0..<10.0: return .slow
-        default: return .verySlow
-        }
-    }
-    
-    var percentage: String {
-        return rawValue
-    }
-    
-    var color: String {
-        switch self {
-        case .veryFast: return "绿色"
-        case .fast: return "蓝色"
-        case .medium: return "黄色"
-        case .slow: return "橙色"
-        case .verySlow: return "红色"
-        }
-    }
-}
+// DwellTimeRange 已移至 Core/DwellTimeAnalyzer.swift，避免重复定义
 

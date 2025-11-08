@@ -169,7 +169,10 @@ struct LearningHomeView: View {
             showLibrary = true
         }
         .fullScreenCover(isPresented: $showStudyFlow) {
-            SwipeCardsView()
+            // ⭐ 使用 ZLSwipeableViewSwift 重构版本 (基于 UIKit)
+            ZLSwipeCardsView()
+                .environmentObject(appState)
+                .id("swipe-cards-view")
         }
         .sheet(isPresented: $showLibrary) {
             NavigationView {

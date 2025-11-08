@@ -164,6 +164,9 @@ final class AppState: ObservableObject {
     }
     @Published var localDatabase: LocalDatabaseSnapshot
     
+    // 全局学习 ViewModel（避免每次创建新实例）
+    let studyViewModel = StudyViewModel()
+    
     init(dashboard: DashboardSnapshot = .demo) {
         self.dashboard = dashboard
         self.hasActiveGoal = dashboard.goal != nil

@@ -2,8 +2,9 @@
 //  TaskScheduler.swift
 //  NFwordsDemo
 //
-//  任务调度器 - 生成每日任务和学习队列
+//  任务调度器 - 生成每日任务和学习队列（集成核心组件）
 //  Created by 甘名杨 on 2025/11/3.
+//  Updated by AI Assistant on 2025/11/5 - 集成核心组件
 //
 
 import Foundation
@@ -11,7 +12,65 @@ import Foundation
 // MARK: - 任务调度器
 class TaskScheduler {
     
-    // MARK: - 生成每日任务
+    // 核心组件 ⭐
+    private let taskStrategy: TaskGenerationStrategy
+    private let dwellAnalyzer: DwellTimeAnalyzer
+    
+    init() {
+        self.dwellAnalyzer = DwellTimeAnalyzerFactory.defaultAnalyzer()
+        self.taskStrategy = TaskGenerationStrategyFactory.defaultStrategy(dwellAnalyzer: dwellAnalyzer)
+        
+        #if DEBUG
+        print("[TaskScheduler] Initialized with:")
+        print("  - \(taskStrategy.strategyName)")
+        print("  - DwellTimeAnalyzer")
+        #endif
+    }
+    
+    // MARK: - 公共方法（使用核心组件）⭐
+    
+    /// 生成完整的学习计划（所有天的任务）
+    func generateCompletePlan(for goal: LearningGoal, packEntries: [Int]) -> [DailyTask] {
+        #if DEBUG
+        print("[TaskScheduler] Generating complete plan for: \(goal.packName)")
+        #endif
+        
+        return taskStrategy.generateCompletePlan(for: goal, packEntries: packEntries)
+    }
+    
+    /// 生成单日任务（基于昨日停留时间分析）⭐
+    func generateDailyTask(
+        for goal: LearningGoal,
+        day: Int,
+        packEntries: [Int],
+        yesterdayRecords: [Int: WordLearningRecord]?
+    ) -> DailyTask {
+        
+        #if DEBUG
+        print("[TaskScheduler] Generating task for day \(day)")
+        #endif
+        
+        // 分析昨日停留时间
+        var analysis: DwellTimeAnalysis?
+        if let records = yesterdayRecords, !records.isEmpty {
+            analysis = dwellAnalyzer.analyze(records)
+            
+            #if DEBUG
+            print("[TaskScheduler] Yesterday analysis: \(analysis!.briefSummary)")
+            #endif
+        }
+        
+        // 使用策略生成任务
+        return taskStrategy.generateDailyTask(
+            for: goal,
+            day: day,
+            packEntries: packEntries,
+            previousAnalysis: analysis
+        )
+    }
+    
+    // MARK: - 原有方法（保持兼容）
+    
     /// 根据学习目标生成某一天的任务
     /// - Parameters:
     ///   - goal: 学习目标
@@ -99,7 +158,6 @@ class TaskScheduler {
     /// - Returns: 学习卡片数组
     func generateStudyQueue(task: DailyTask, words: [Word]) -> [StudyCard] {
         var queue: [StudyCard] = []
-        var cardId = 0
         
         // 1. 新词（每个10次）
         for wid in task.newWords {
@@ -107,8 +165,7 @@ class TaskScheduler {
             let record = WordLearningRecord.initial(wid: wid, targetExposures: 10)
             
             for _ in 0..<10 {
-                cardId += 1
-                queue.append(StudyCard(id: cardId, word: word, record: record))
+                queue.append(StudyCard(word: word, record: record))
             }
         }
         
@@ -118,8 +175,7 @@ class TaskScheduler {
             let record = WordLearningRecord.initial(wid: wid, targetExposures: 5)
             
             for _ in 0..<5 {
-                cardId += 1
-                queue.append(StudyCard(id: cardId, word: word, record: record))
+                queue.append(StudyCard(word: word, record: record))
             }
         }
         

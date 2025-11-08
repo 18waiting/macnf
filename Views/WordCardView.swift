@@ -51,7 +51,7 @@ struct WordCardView: View {
             .offset(x: offset.width, y: offset.height * 0.1)
             .rotationEffect(.degrees(rotation))
             .gesture(
-                DragGesture()
+                DragGesture(minimumDistance: 10)  // ⭐ 增加最小距离，避免拦截点击
                     .updating($isDragging) { _, state, _ in
                         state = true
                     }
@@ -59,10 +59,19 @@ struct WordCardView: View {
                         if isTopCard {
                             offset = gesture.translation
                             rotation = Double(gesture.translation.width / 20).clamped(to: -15...15)
+                            #if DEBUG
+                            // 只在大幅度拖动时打印日志
+                            if abs(gesture.translation.width) > 50 {
+                                // print("[Card] Dragging: \(Int(gesture.translation.width))pt")
+                            }
+                            #endif
                         }
                     }
                     .onEnded { gesture in
                         if isTopCard {
+                            #if DEBUG
+                            print("[Card] Drag ended: translation=\(Int(gesture.translation.width))pt, velocity=\(Int(gesture.predictedEndTranslation.width))pt")
+                            #endif
                             handleSwipeGesture(translation: gesture.translation, velocity: gesture.predictedEndTranslation)
                         }
                     }
@@ -108,9 +117,19 @@ struct WordCardView: View {
                     if isExpanded {
                         expandedContent
                             .transition(.move(edge: .top).combined(with: .opacity))
+                            .onAppear {
+                                #if DEBUG
+                                print("[Card] ✅ Expanded content is now VISIBLE")
+                                #endif
+                            }
                     } else {
                         // 展开提示
                         expandHint
+                            .onAppear {
+                                #if DEBUG
+                                print("[Card] 📍 Showing expand hint (collapsed state)")
+                                #endif
+                            }
                     }
                     
                     Spacer()
@@ -121,23 +140,27 @@ struct WordCardView: View {
             .disabled(isDragging)  // 滑动时禁用滚动
         }
         .contentShape(Rectangle())
-        .onTapGesture {
-            #if DEBUG
-            print("[Card] Tap detected on card: \(word.word), isTopCard: \(isTopCard), current isExpanded: \(isExpanded)")
-            #endif
-            guard isTopCard else {
-                #if DEBUG
-                print("[Card] Ignoring tap - not top card")
-                #endif
-                return
-            }
-            withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
-                isExpanded.toggle()
-                #if DEBUG
-                print("[Card] Expanded toggled to: \(isExpanded)")
-                #endif
-            }
-        }
+        .simultaneousGesture(
+            // ⭐ 使用 simultaneousGesture 让点击手势和拖拽手势共存
+            TapGesture()
+                .onEnded { _ in
+                    #if DEBUG
+                    print("[Card] Tap detected on card: \(word.word), isTopCard: \(isTopCard), current isExpanded: \(isExpanded)")
+                    #endif
+                    guard isTopCard else {
+                        #if DEBUG
+                        print("[Card] Ignoring tap - not top card")
+                        #endif
+                        return
+                    }
+                    withAnimation(.spring(response: 0.3, dampingFraction: 0.7)) {
+                        isExpanded.toggle()
+                        #if DEBUG
+                        print("[Card] Expanded toggled to: \(isExpanded)")
+                        #endif
+                    }
+                }
+        )
     }
     
     // MARK: - 单词头部

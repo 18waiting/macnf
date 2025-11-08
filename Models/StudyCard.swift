@@ -16,8 +16,15 @@ import Foundation
 
 // MARK: - 学习卡片
 struct StudyCard: Identifiable {
-    let id: Int  // 卡片唯一ID（自增）
+    let id: UUID  // 卡片唯一ID（UUID保证全局唯一）
     let word: Word
     var record: WordLearningRecord
+    
+    /// 创建新卡片（自动生成唯一ID）
+    init(word: Word, record: WordLearningRecord) {
+        self.id = UUID()
+        self.word = word
+        self.record = record
+    }
 }
 

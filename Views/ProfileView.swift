@@ -438,10 +438,15 @@ struct ProfileView: View {
                 // 1. 重置数据库
                 try DatabaseResetService.shared.resetAndReseed()
                 
-                // 2. 重新加载数据到 AppState
+                // 2. 重置学习 ViewModel
+                await MainActor.run {
+                    appState.studyViewModel.reset()
+                }
+                
+                // 3. 重新加载数据到 AppState
                 try await LocalDatabaseCoordinator.shared.bootstrap(appState: appState)
                 
-                // 3. 显示成功提示
+                // 4. 显示成功提示
                 await MainActor.run {
                     isResetting = false
                     showResetProgress = true

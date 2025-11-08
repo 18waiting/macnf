@@ -35,6 +35,7 @@ class StudyViewModel: ObservableObject {
     private var timer: Timer?
     private let sessionId = UUID().uuidString  // 会话ID
     private var currentPackId: Int = 2001  // 当前词书ID（默认CET-4）
+    private var hasInitialized = false  // 标记是否已初始化队列
     
     // MARK: - Dependencies
     let dwellTimeTracker = DwellTimeTracker()
@@ -46,6 +47,9 @@ class StudyViewModel: ObservableObject {
     private let taskStorage = DailyTaskStorage()
     private let goalStorage = LearningGoalStorage()
     private let reportStorage = DailyReportStorage()
+    
+    // 核心组件 ⭐
+    private var exposureStrategy: ExposureStrategy = ExposureStrategyFactory.defaultStrategy()
     
     // MARK: - Computed Properties
     var totalCount: Int {
@@ -82,27 +86,40 @@ class StudyViewModel: ObservableObject {
             
             if let goal = currentGoal {
                 currentPackId = goal.packId
+                
+                // 根据目标选择曝光策略 ⭐ 新增
+                exposureStrategy = ExposureStrategyFactory.strategyForGoal(goal)
+                
                 #if DEBUG
-                print("📖 已加载学习目标: \(goal.packName), 第\(goal.currentDay)天")
+                print("[ViewModel] Loaded goal: \(goal.packName), Day \(goal.currentDay)/\(goal.durationDays)")
+                print("[ViewModel] Using strategy: \(exposureStrategy.strategyName)")
                 #endif
             }
             
             if let task = currentTask {
                 #if DEBUG
-                print("📅 已加载今日任务: \(task.newWordsCount)新词 + \(task.reviewWordsCount)复习")
+                print("[ViewModel] Loaded task: \(task.newWordsCount) new + \(task.reviewWordsCount) review")
                 #endif
             }
         } catch {
             #if DEBUG
-            print("⚠️ 加载目标/任务失败: \(error)")
+            print("[ViewModel] ERROR loading goal/task: \(error)")
             #endif
         }
     }
     
     // MARK: - Setup
     private func setupDemoData() {
+        // 避免重复初始化
+        guard !hasInitialized else {
+            #if DEBUG
+            print("[ViewModel] setupDemoData: already initialized, skipping")
+            #endif
+            return
+        }
+        
         #if DEBUG
-        print("[ViewModel] setupDemoData: loading study cards...")
+        print("[ViewModel] setupDemoData: loading study cards (first time)...")
         #endif
         
         do {
@@ -134,14 +151,19 @@ class StudyViewModel: ObservableObject {
             // 回退到示例数据
             learningRecords.removeAll()
             var fallbackCards: [StudyCard] = []
-            var cardIdCounter = 0
             
             for word in Word.examples {
-                let record = WordLearningRecord.initial(wid: word.id, targetExposures: 10)
+                var record = WordLearningRecord.initial(wid: word.id, targetExposures: 10)
+                
+                // 使用曝光策略计算目标次数 ⭐ 新增
+                let targetExposures = exposureStrategy.calculateExposures(for: record)
+                record.targetExposures = targetExposures
+                record.remainingExposures = targetExposures
+                
                 learningRecords[word.id] = record
-                for _ in 0..<10 {
-                    cardIdCounter += 1
-                    fallbackCards.append(StudyCard(id: cardIdCounter, word: word, record: record))
+                
+                for _ in 0..<targetExposures {
+                    fallbackCards.append(StudyCard(word: word, record: record))
                 }
             }
             
@@ -154,6 +176,9 @@ class StudyViewModel: ObservableObject {
         
         loadNextCards()
         
+        // 标记已初始化
+        hasInitialized = true
+        
         #if DEBUG
         print("[ViewModel] Visible cards: \(visibleCards.count)")
         if visibleCards.isEmpty {
@@ -163,6 +188,7 @@ class StudyViewModel: ObservableObject {
                 print("[ViewModel]   Card \(index + 1): \(card.word.word) (wid: \(card.word.id))")
             }
         }
+        print("[ViewModel] Initialization complete, hasInitialized=true")
         #endif
     }
     
@@ -246,15 +272,18 @@ class StudyViewModel: ObservableObject {
             currentTask = task
         }
         
-        // 4. 立即移除顶部卡片
-        if !visibleCards.isEmpty {
-            visibleCards.removeFirst()
+        // 4. 检查是否提前掌握（使用曝光策略）⭐ 新增
+        let updatedRecord = learningRecords[wordId]!
+        if !exposureStrategy.shouldContinueExposure(for: updatedRecord) {
+            // 提前掌握，从队列移除该单词的所有剩余卡片
+            let removedCount = queue.removeAll { $0.word.id == wordId }
             #if DEBUG
-            print("[ViewModel] Removed top card, visible now: \(visibleCards.count)")
+            print("[Strategy] Word \(wordId) mastered early, removed \(removedCount) cards from queue")
+            print("[Strategy] Reason: right=\(updatedRecord.swipeRightCount), dwell=\(String(format: "%.1f", updatedRecord.avgDwellTime))s")
             #endif
         }
         
-        // 5. 从队列移除并加载下一张
+        // 5. 从队列移除卡片（关键修复：先移除 queue，再更新 visibleCards）⭐
         if !queue.isEmpty {
             queue.removeFirst()
             
@@ -262,21 +291,17 @@ class StudyViewModel: ObservableObject {
             print("[ViewModel] Removed from queue, queue now: \(queue.count)")
             #endif
             
-            // 立即加载下一批卡片（如果可见卡片少于3张）
-            if visibleCards.count < 3 && !queue.isEmpty {
-                let needed = 3 - visibleCards.count
-                let newCards = Array(queue.prefix(needed))
-                visibleCards.append(contentsOf: newCards)
-                
-                #if DEBUG
-                print("[ViewModel] Added \(newCards.count) cards, visible now: \(visibleCards.count)")
-                if let first = visibleCards.first {
-                    print("[ViewModel] New top card: \(first.word.word) (wid: \(first.word.id))")
-                }
-                #endif
-            }
+            // 6. 重新计算可见卡片（始终是 queue 的前 3 张，避免重复）⭐
+            visibleCards = Array(queue.prefix(3))
             
-            // 延迟启动下一张卡片的计时（给UI动画时间）
+            #if DEBUG
+            print("[ViewModel] Updated visibleCards from queue, visible now: \(visibleCards.count)")
+            if let first = visibleCards.first {
+                print("[ViewModel] New top card: \(first.word.word) (wid: \(first.word.id))")
+            }
+            #endif
+            
+            // 7. 延迟启动下一张卡片的计时（给UI动画时间）
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
                 if let nextCard = self.visibleCards.first {
                     #if DEBUG
@@ -287,7 +312,7 @@ class StudyViewModel: ObservableObject {
             }
         }
         
-        // 6. 检查是否完成
+        // 8. 检查是否完成
         if queue.isEmpty && visibleCards.isEmpty {
             #if DEBUG
             print("[ViewModel] Study completed, generating report...")
@@ -410,6 +435,43 @@ class StudyViewModel: ObservableObject {
         timer = Timer.scheduledTimer(withTimeInterval: 1.0, repeats: true) { _ in
             self.studyTime = Date().timeIntervalSince(self.startTime)
         }
+    }
+    
+    // MARK: - Public Methods
+    
+    /// 重置 ViewModel 状态（用于重置学习进度或重新开始）
+    func reset() {
+        #if DEBUG
+        print("[ViewModel] Resetting ViewModel state...")
+        #endif
+        
+        timer?.invalidate()
+        dwellTimeTracker.reset()
+        
+        queue.removeAll()
+        learningRecords.removeAll()
+        visibleCards.removeAll()
+        completedCount = 0
+        rightSwipeCount = 0
+        leftSwipeCount = 0
+        studyTime = 0
+        isCompleted = false
+        currentReport = nil
+        hasInitialized = false
+        startTime = Date()
+        
+        // 重新加载目标和任务
+        loadCurrentGoalAndTask()
+        
+        // 重新初始化数据
+        setupDemoData()
+        
+        // 重新启动计时器
+        startTimer()
+        
+        #if DEBUG
+        print("[ViewModel] Reset complete, ready for new session")
+        #endif
     }
     
     deinit {

@@ -85,64 +85,6 @@ class DwellTimeTracker: ObservableObject {
     }
 }
 
-// MARK: - 停留时间分析器
-class DwellTimeAnalyzer {
-    // 计算熟悉度等级
-    static func calculateFamiliarity(avgDwellTime: Double) -> FamiliarityLevel {
-        switch avgDwellTime {
-        case 0..<2.0:
-            return .veryFamiliar
-        case 2.0..<5.0:
-            return .familiar
-        case 5.0..<8.0:
-            return .unfamiliar
-        default:
-            return .veryUnfamiliar
-        }
-    }
-    
-    // 计算下次出现次数
-    static func calculateNextRepetitions(avgDwellTime: Double, leftSwipes: Int) -> Int {
-        if avgDwellTime > 8.0 {
-            return 8  // 极度困难：8次
-        } else if avgDwellTime > 5.0 {
-            return 6  // 困难：6次
-        } else if avgDwellTime > 2.0 {
-            return 4  // 一般：4次
-        } else {
-            return 2  // 简单：2次
-        }
-    }
-    
-    // 是否需要生成AI微场景
-    static func needsMicroScene(avgDwellTime: Double, leftSwipes: Int) -> Bool {
-        return avgDwellTime > 8.0 && leftSwipes >= 2
-    }
-}
-
-// MARK: - 熟悉度等级
-enum FamiliarityLevel {
-    case veryFamiliar    // 非常熟悉 (<2s)
-    case familiar        // 基本熟悉 (2-5s)
-    case unfamiliar      // 不够熟悉 (5-8s)
-    case veryUnfamiliar  // 非常陌生 (>8s)
-    
-    var description: String {
-        switch self {
-        case .veryFamiliar: return "非常熟悉"
-        case .familiar: return "基本熟悉"
-        case .unfamiliar: return "不够熟悉"
-        case .veryUnfamiliar: return "非常陌生"
-        }
-    }
-    
-    var emoji: String {
-        switch self {
-        case .veryFamiliar: return "✅"
-        case .familiar: return "👍"
-        case .unfamiliar: return "⚠️"
-        case .veryUnfamiliar: return "❌"
-        }
-    }
-}
+// 注：停留时间分析器（DwellTimeAnalyzer）和熟悉度等级（FamiliarityLevel）
+// 已移至 Core/DwellTimeAnalyzer.swift，作为核心业务组件统一管理
 

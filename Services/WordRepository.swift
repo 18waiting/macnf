@@ -58,7 +58,6 @@ final class WordRepository {
         
         var learningRecords: [Int: WordLearningRecord] = [:]
         var cards: [StudyCard] = []
-        var cardIdCounter = 0
         
         for word in words {
             var record = WordLearningRecord.initial(wid: word.id, targetExposures: exposuresPerWord)
@@ -69,8 +68,7 @@ final class WordRepository {
             learningRecords[word.id] = record
             let exposuresToSchedule = max(record.remainingExposures, 1)
             for _ in 0..<exposuresToSchedule {
-                cardIdCounter += 1
-                cards.append(StudyCard(id: cardIdCounter, word: word, record: record))
+                cards.append(StudyCard(word: word, record: record))
             }
         }
         
