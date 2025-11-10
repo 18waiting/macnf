@@ -2,7 +2,7 @@
 //  WordCardUIView.swift
 //  NFwordsDemo
 //
-//  ZLSwipeableViewSwift 的 UIKit 卡片视图
+//  Koloda 的 UIKit 卡片视图
 //  纯 UIView 实现，高性能，支持点击展开/收起
 //
 
@@ -12,476 +12,468 @@ class WordCardUIView: UIView {
     
     // MARK: - Properties
     
-    var card: StudyCard? {
-        didSet {
-            updateContent()
-        }
-    }
+    private var card: StudyCard?
+    private var exposureInfo: (current: Int, total: Int)?  // ⭐ 新增：曝光次数信息（已曝光/总曝光）
     
-    var isExpanded: Bool = false {
-        didSet {
-            updateExpandedState()
-        }
-    }
-    
-    // MARK: - UI Components
-    
-    private let containerView: UIView = {
-        let view = UIView()
-        view.backgroundColor = .systemBackground
-        view.layer.cornerRadius = 20
-        view.layer.shadowColor = UIColor.black.cgColor
-        view.layer.shadowOpacity = 0.15
-        view.layer.shadowOffset = CGSize(width: 0, height: 10)
-        view.layer.shadowRadius = 20
-        return view
-    }()
-    
-    private let scrollView: UIScrollView = {
-        let sv = UIScrollView()
-        sv.showsVerticalScrollIndicator = false
-        sv.showsHorizontalScrollIndicator = false
-        sv.alwaysBounceVertical = true
-        return sv
-    }()
-    
-    private let contentStack: UIStackView = {
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.spacing = 24
-        stack.alignment = .center
-        stack.distribution = .fill
-        return stack
-    }()
-    
-    // 单词头部
-    private let wordLabel: UILabel = {
-        let label = UILabel()
-        label.font = UIFont.systemFont(ofSize: 52, weight: .bold)
-        label.textAlignment = .center
-        label.textColor = .label
-        label.numberOfLines = 0
-        return label
-    }()
-    
-    private let phoneticLabel: UILabel = {
-        let label = UILabel()
-        label.font = UIFont.systemFont(ofSize: 24)
-        label.textAlignment = .center
-        label.textColor = .secondaryLabel
-        return label
-    }()
-    
-    private let primaryMeaningContainer: UIView = {
-        let view = UIView()
-        return view
-    }()
-    
-    private let partOfSpeechTag: UILabel = {
-        let label = UILabel()
-        label.font = UIFont.systemFont(ofSize: 12, weight: .bold)
-        label.textColor = .white
-        label.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.6)
-        label.textAlignment = .center
-        label.layer.cornerRadius = 6
-        label.layer.masksToBounds = true
-        return label
-    }()
-    
-    private let meaningLabel: UILabel = {
-        let label = UILabel()
-        label.font = UIFont.systemFont(ofSize: 20)
-        label.textColor = .secondaryLabel
-        label.numberOfLines = 0
-        label.textAlignment = .center
-        return label
-    }()
-    
-    // 展开提示
-    private let expandHintContainer: UIView = {
-        let view = UIView()
-        return view
-    }()
-    
-    private let expandHintIcon: UIImageView = {
-        let iv = UIImageView(image: UIImage(systemName: "hand.tap.fill"))
-        iv.tintColor = UIColor.systemBlue.withAlphaComponent(0.6)
-        iv.contentMode = .scaleAspectFit
-        return iv
-    }()
-    
-    private let expandHintLabel: UILabel = {
-        let label = UILabel()
-        label.text = "点击查看更多"
-        label.font = UIFont.systemFont(ofSize: 16)
-        label.textColor = .secondaryLabel
-        label.textAlignment = .center
-        return label
-    }()
-    
-    // 展开内容
-    private let expandedContentStack: UIStackView = {
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.spacing = 24
-        stack.alignment = .leading
-        stack.distribution = .fill
-        stack.isHidden = true
-        return stack
-    }()
-    
-    private let translationsStack: UIStackView = {
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.spacing = 12
-        stack.alignment = .leading
-        stack.distribution = .fill
-        return stack
-    }()
-    
-    private let phrasesStack: UIStackView = {
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.spacing = 12
-        stack.alignment = .fill
-        stack.distribution = .fill
-        return stack
-    }()
-    
-    private let phrasesTitle: UILabel = {
-        let label = UILabel()
-        label.text = "常用搭配"
-        label.font = UIFont.systemFont(ofSize: 18, weight: .semibold)
-        label.textColor = .label
-        return label
-    }()
+    // UI 组件
+    private let scrollView = UIScrollView()
+    private let contentView = UIView()
+    private let wordLabel = UILabel()
+    private let phoneticLabel = UILabel()
+    private let firstTranslationStack = UIStackView()
+    private let expandHintView = UIView()
+    private let expandedContentView = UIView()
+    private let exposureLabel = UILabel()  // ⭐ 新增：曝光次数标签
     
     // 方向指示器
-    private let rightIndicator: UIImageView = {
-        let iv = UIImageView(image: UIImage(systemName: "checkmark.circle.fill"))
-        iv.tintColor = .systemGreen
-        iv.contentMode = .scaleAspectFit
-        iv.alpha = 0
-        return iv
-    }()
+    private let leftIndicator = UIImageView()
+    private let rightIndicator = UIImageView()
     
-    private let leftIndicator: UIImageView = {
-        let iv = UIImageView(image: UIImage(systemName: "xmark.circle.fill"))
-        iv.tintColor = .systemOrange
-        iv.contentMode = .scaleAspectFit
-        iv.alpha = 0
-        return iv
-    }()
+    // 状态
+    private var isExpanded = false
     
     // MARK: - Initialization
     
     override init(frame: CGRect) {
         super.init(frame: frame)
         setupUI()
-        setupGestures()
     }
     
     required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
+        super.init(coder: coder)
+        setupUI()
     }
     
-    // MARK: - Setup
+    // MARK: - Configuration
+    
+    func configure(with card: StudyCard, exposureInfo: (current: Int, total: Int)? = nil) {
+        self.card = card
+        self.exposureInfo = exposureInfo
+        updateContent()
+    }
+    
+    // MARK: - UI Setup
     
     private func setupUI() {
-        backgroundColor = .clear
+        backgroundColor = .white
+        layer.cornerRadius = 20
+        layer.shadowColor = UIColor.black.cgColor
+        layer.shadowOpacity = 0.15
+        layer.shadowRadius = 20
+        layer.shadowOffset = CGSize(width: 0, height: 10)
         
-        // 容器
-        addSubview(containerView)
-        containerView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            containerView.topAnchor.constraint(equalTo: topAnchor),
-            containerView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            containerView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            containerView.bottomAnchor.constraint(equalTo: bottomAnchor)
-        ])
-        
-        // ScrollView
-        containerView.addSubview(scrollView)
+        setupScrollView()
+        setupWordHeader()
+        setupExposureLabel()  // ⭐ 新增：设置曝光次数标签
+        setupExpandHint()
+        setupExpandedContent()
+        setupDirectionIndicators()
+        setupTapGesture()
+    }
+    
+    private func setupScrollView() {
         scrollView.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            scrollView.topAnchor.constraint(equalTo: containerView.topAnchor),
-            scrollView.leadingAnchor.constraint(equalTo: containerView.leadingAnchor),
-            scrollView.trailingAnchor.constraint(equalTo: containerView.trailingAnchor),
-            scrollView.bottomAnchor.constraint(equalTo: containerView.bottomAnchor)
-        ])
+        scrollView.showsVerticalScrollIndicator = false
+        scrollView.delegate = self
+        addSubview(scrollView)
         
-        // ContentStack
-        scrollView.addSubview(contentStack)
-        contentStack.translatesAutoresizingMaskIntoConstraints = false
-        NSLayoutConstraint.activate([
-            contentStack.topAnchor.constraint(equalTo: scrollView.topAnchor, constant: 60),
-            contentStack.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor, constant: 30),
-            contentStack.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor, constant: -30),
-            contentStack.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: -40),
-            contentStack.widthAnchor.constraint(equalTo: scrollView.widthAnchor, constant: -60)
-        ])
-        
-        // 单词头部
-        contentStack.addArrangedSubview(wordLabel)
-        contentStack.addArrangedSubview(phoneticLabel)
-        
-        // 主要释义容器
-        primaryMeaningContainer.addSubview(partOfSpeechTag)
-        primaryMeaningContainer.addSubview(meaningLabel)
-        
-        partOfSpeechTag.translatesAutoresizingMaskIntoConstraints = false
-        meaningLabel.translatesAutoresizingMaskIntoConstraints = false
+        contentView.translatesAutoresizingMaskIntoConstraints = false
+        scrollView.addSubview(contentView)
         
         NSLayoutConstraint.activate([
-            partOfSpeechTag.topAnchor.constraint(equalTo: primaryMeaningContainer.topAnchor),
-            partOfSpeechTag.leadingAnchor.constraint(equalTo: primaryMeaningContainer.leadingAnchor),
-            partOfSpeechTag.heightAnchor.constraint(equalToConstant: 24),
-            partOfSpeechTag.widthAnchor.constraint(greaterThanOrEqualToConstant: 50),
+            scrollView.topAnchor.constraint(equalTo: topAnchor),
+            scrollView.leadingAnchor.constraint(equalTo: leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: trailingAnchor),
+            scrollView.bottomAnchor.constraint(equalTo: bottomAnchor),
             
-            meaningLabel.topAnchor.constraint(equalTo: primaryMeaningContainer.topAnchor),
-            meaningLabel.leadingAnchor.constraint(equalTo: partOfSpeechTag.trailingAnchor, constant: 8),
-            meaningLabel.trailingAnchor.constraint(equalTo: primaryMeaningContainer.trailingAnchor),
-            meaningLabel.bottomAnchor.constraint(equalTo: primaryMeaningContainer.bottomAnchor)
+            contentView.topAnchor.constraint(equalTo: scrollView.topAnchor),
+            contentView.leadingAnchor.constraint(equalTo: scrollView.leadingAnchor),
+            contentView.trailingAnchor.constraint(equalTo: scrollView.trailingAnchor),
+            contentView.bottomAnchor.constraint(equalTo: scrollView.bottomAnchor),
+            contentView.widthAnchor.constraint(equalTo: scrollView.widthAnchor)
         ])
+    }
+    
+    private func setupWordHeader() {
+        // 单词标签
+        wordLabel.translatesAutoresizingMaskIntoConstraints = false
+        wordLabel.font = .systemFont(ofSize: 52, weight: .bold)
+        wordLabel.textColor = .label
+        wordLabel.textAlignment = .center
+        wordLabel.numberOfLines = 0
+        contentView.addSubview(wordLabel)
         
-        contentStack.addArrangedSubview(primaryMeaningContainer)
+        // 音标标签
+        phoneticLabel.translatesAutoresizingMaskIntoConstraints = false
+        phoneticLabel.font = .systemFont(ofSize: 20)
+        phoneticLabel.textColor = .secondaryLabel
+        phoneticLabel.textAlignment = .center
+        contentView.addSubview(phoneticLabel)
         
-        // 展开提示
-        expandHintContainer.addSubview(expandHintIcon)
-        expandHintContainer.addSubview(expandHintLabel)
-        
-        expandHintIcon.translatesAutoresizingMaskIntoConstraints = false
-        expandHintLabel.translatesAutoresizingMaskIntoConstraints = false
+        // 第一个释义（折叠时显示）
+        firstTranslationStack.translatesAutoresizingMaskIntoConstraints = false
+        firstTranslationStack.axis = .horizontal
+        firstTranslationStack.spacing = 8
+        firstTranslationStack.alignment = .center
+        contentView.addSubview(firstTranslationStack)
         
         NSLayoutConstraint.activate([
-            expandHintIcon.topAnchor.constraint(equalTo: expandHintContainer.topAnchor),
-            expandHintIcon.centerXAnchor.constraint(equalTo: expandHintContainer.centerXAnchor),
-            expandHintIcon.widthAnchor.constraint(equalToConstant: 24),
-            expandHintIcon.heightAnchor.constraint(equalToConstant: 24),
+            wordLabel.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 60),
+            wordLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 30),
+            wordLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -30),
             
-            expandHintLabel.topAnchor.constraint(equalTo: expandHintIcon.bottomAnchor, constant: 8),
-            expandHintLabel.leadingAnchor.constraint(equalTo: expandHintContainer.leadingAnchor),
-            expandHintLabel.trailingAnchor.constraint(equalTo: expandHintContainer.trailingAnchor),
-            expandHintLabel.bottomAnchor.constraint(equalTo: expandHintContainer.bottomAnchor)
+            phoneticLabel.topAnchor.constraint(equalTo: wordLabel.bottomAnchor, constant: 16),
+            phoneticLabel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 30),
+            phoneticLabel.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -30),
+            
+            firstTranslationStack.topAnchor.constraint(equalTo: phoneticLabel.bottomAnchor, constant: 16),
+            firstTranslationStack.centerXAnchor.constraint(equalTo: contentView.centerXAnchor)
         ])
-        
-        contentStack.addArrangedSubview(expandHintContainer)
-        
-        // 展开内容
-        expandedContentStack.addArrangedSubview(createDivider())
-        expandedContentStack.addArrangedSubview(translationsStack)
-        expandedContentStack.addArrangedSubview(createDivider())
-        expandedContentStack.addArrangedSubview(phrasesTitle)
-        expandedContentStack.addArrangedSubview(phrasesStack)
-        
-        contentStack.addArrangedSubview(expandedContentStack)
+    }
+    
+    // ⭐ 新增：设置曝光次数标签
+    private func setupExposureLabel() {
+        exposureLabel.translatesAutoresizingMaskIntoConstraints = false
+        exposureLabel.font = .systemFont(ofSize: 16, weight: .medium)
+        exposureLabel.textColor = .systemBlue
+        exposureLabel.textAlignment = .center
+        exposureLabel.backgroundColor = .systemBlue.withAlphaComponent(0.1)
+        exposureLabel.layer.cornerRadius = 12
+        exposureLabel.clipsToBounds = true
+        exposureLabel.isHidden = true  // 默认隐藏，有数据时显示
+        addSubview(exposureLabel)
         
         NSLayoutConstraint.activate([
-            expandedContentStack.widthAnchor.constraint(equalTo: contentStack.widthAnchor)
+            exposureLabel.topAnchor.constraint(equalTo: topAnchor, constant: 20),
+            exposureLabel.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -20),
+            exposureLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 60),
+            exposureLabel.heightAnchor.constraint(equalToConstant: 32)
         ])
+    }
+    
+    private func setupExpandHint() {
+        expandHintView.translatesAutoresizingMaskIntoConstraints = false
+        contentView.addSubview(expandHintView)
         
-        // 方向指示器
-        containerView.addSubview(rightIndicator)
-        containerView.addSubview(leftIndicator)
+        let icon = UIImageView(image: UIImage(systemName: "hand.tap.fill"))
+        icon.tintColor = .systemBlue.withAlphaComponent(0.6)
+        icon.translatesAutoresizingMaskIntoConstraints = false
+        expandHintView.addSubview(icon)
         
+        let label = UILabel()
+        label.text = "点击查看更多"
+        label.font = .systemFont(ofSize: 14)
+        label.textColor = .secondaryLabel
+        label.translatesAutoresizingMaskIntoConstraints = false
+        expandHintView.addSubview(label)
+        
+        NSLayoutConstraint.activate([
+            expandHintView.topAnchor.constraint(equalTo: firstTranslationStack.bottomAnchor, constant: 20),
+            expandHintView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
+            expandHintView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor),
+            expandHintView.heightAnchor.constraint(equalToConstant: 60),
+            
+            icon.centerXAnchor.constraint(equalTo: expandHintView.centerXAnchor),
+            icon.topAnchor.constraint(equalTo: expandHintView.topAnchor),
+            icon.widthAnchor.constraint(equalToConstant: 24),
+            icon.heightAnchor.constraint(equalToConstant: 24),
+            
+            label.centerXAnchor.constraint(equalTo: expandHintView.centerXAnchor),
+            label.topAnchor.constraint(equalTo: icon.bottomAnchor, constant: 8)
+        ])
+    }
+    
+    private func setupExpandedContent() {
+        expandedContentView.translatesAutoresizingMaskIntoConstraints = false
+        expandedContentView.isHidden = true
+        contentView.addSubview(expandedContentView)
+        
+        NSLayoutConstraint.activate([
+            expandedContentView.topAnchor.constraint(equalTo: firstTranslationStack.bottomAnchor, constant: 24),
+            expandedContentView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 30),
+            expandedContentView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -30),
+            expandedContentView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -40)
+        ])
+    }
+    
+    private func setupDirectionIndicators() {
+        // 右滑指示器（绿色 ✓）
         rightIndicator.translatesAutoresizingMaskIntoConstraints = false
+        rightIndicator.image = UIImage(systemName: "checkmark.circle.fill")
+        rightIndicator.tintColor = .systemGreen
+        rightIndicator.alpha = 0
+        addSubview(rightIndicator)
+        
+        // 左滑指示器（橙色 ✗）
         leftIndicator.translatesAutoresizingMaskIntoConstraints = false
+        leftIndicator.image = UIImage(systemName: "xmark.circle.fill")
+        leftIndicator.tintColor = .systemOrange
+        leftIndicator.alpha = 0
+        addSubview(leftIndicator)
         
         NSLayoutConstraint.activate([
-            rightIndicator.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 50),
-            rightIndicator.trailingAnchor.constraint(equalTo: containerView.trailingAnchor, constant: -30),
+            rightIndicator.topAnchor.constraint(equalTo: topAnchor, constant: 50),
+            rightIndicator.trailingAnchor.constraint(equalTo: trailingAnchor, constant: -30),
             rightIndicator.widthAnchor.constraint(equalToConstant: 80),
             rightIndicator.heightAnchor.constraint(equalToConstant: 80),
             
-            leftIndicator.topAnchor.constraint(equalTo: containerView.topAnchor, constant: 50),
-            leftIndicator.leadingAnchor.constraint(equalTo: containerView.leadingAnchor, constant: 30),
+            leftIndicator.topAnchor.constraint(equalTo: topAnchor, constant: 50),
+            leftIndicator.leadingAnchor.constraint(equalTo: leadingAnchor, constant: 30),
             leftIndicator.widthAnchor.constraint(equalToConstant: 80),
             leftIndicator.heightAnchor.constraint(equalToConstant: 80)
         ])
     }
     
-    private func setupGestures() {
+    private func setupTapGesture() {
         let tapGesture = UITapGestureRecognizer(target: self, action: #selector(handleTap))
         addGestureRecognizer(tapGesture)
     }
     
-    private func createDivider() -> UIView {
-        let divider = UIView()
-        divider.backgroundColor = .separator
-        divider.translatesAutoresizingMaskIntoConstraints = false
-        divider.heightAnchor.constraint(equalToConstant: 1).isActive = true
-        return divider
+    // MARK: - Content Update
+    
+    private func updateContent() {
+        guard let card = card else { return }
+        
+        wordLabel.text = card.word.word
+        
+        if let phonetic = card.word.phonetic {
+            phoneticLabel.text = phonetic
+            phoneticLabel.isHidden = false
+        } else {
+            phoneticLabel.isHidden = true
+        }
+        
+        // ⭐ 更新曝光次数显示
+        if let exposureInfo = exposureInfo {
+            exposureLabel.text = "\(exposureInfo.current)/\(exposureInfo.total)"
+            exposureLabel.isHidden = false
+        } else {
+            exposureLabel.isHidden = true
+        }
+        
+        updateFirstTranslation()
+        updateExpandedContent()
+    }
+    
+    private func updateFirstTranslation() {
+        // 清除旧的视图
+        firstTranslationStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+        
+        guard let card = card,
+              let firstTranslation = card.word.translations.first else {
+            return
+        }
+        
+        // 词性标签
+        let posLabel = UILabel()
+        posLabel.text = firstTranslation.displayPartOfSpeech
+        posLabel.font = .systemFont(ofSize: 12, weight: .bold)
+        posLabel.textColor = .white
+        posLabel.backgroundColor = .systemBlue.withAlphaComponent(0.6)
+        posLabel.textAlignment = .center
+        posLabel.layer.cornerRadius = 6
+        posLabel.clipsToBounds = true
+        posLabel.translatesAutoresizingMaskIntoConstraints = false
+        posLabel.textAlignment = .center
+        NSLayoutConstraint.activate([
+            posLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 50),
+            posLabel.heightAnchor.constraint(equalToConstant: 24)
+        ])
+        
+        // 释义标签
+        let meaningLabel = UILabel()
+        meaningLabel.text = firstTranslation.meaning
+        meaningLabel.font = .systemFont(ofSize: 20)
+        meaningLabel.textColor = .secondaryLabel
+        
+        firstTranslationStack.addArrangedSubview(posLabel)
+        firstTranslationStack.addArrangedSubview(meaningLabel)
+    }
+    
+    private func updateExpandedContent() {
+        // 清除旧内容
+        expandedContentView.subviews.forEach { $0.removeFromSuperview() }
+        
+        guard let card = card else { return }
+        
+        var lastView: UIView?
+        var topSpacing: CGFloat = 0
+        
+        // 所有释义
+        for translation in card.word.translations {
+            let stack = UIStackView()
+            stack.axis = .horizontal
+            stack.spacing = 12
+            stack.alignment = .top
+            stack.translatesAutoresizingMaskIntoConstraints = false
+            expandedContentView.addSubview(stack)
+            
+            let posLabel = UILabel()
+            posLabel.text = translation.displayPartOfSpeech
+            posLabel.font = .systemFont(ofSize: 12, weight: .bold)
+            posLabel.textColor = .white
+            posLabel.backgroundColor = .systemBlue.withAlphaComponent(0.6)
+            posLabel.textAlignment = .center
+            posLabel.layer.cornerRadius = 6
+            posLabel.clipsToBounds = true
+            posLabel.translatesAutoresizingMaskIntoConstraints = false
+            posLabel.textAlignment = .center
+            NSLayoutConstraint.activate([
+                posLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 50),
+                posLabel.heightAnchor.constraint(equalToConstant: 24)
+            ])
+            
+            let meaningLabel = UILabel()
+            meaningLabel.text = translation.meaning
+            meaningLabel.font = .systemFont(ofSize: 16)
+            meaningLabel.textColor = .label
+            meaningLabel.numberOfLines = 0
+            
+            stack.addArrangedSubview(posLabel)
+            stack.addArrangedSubview(meaningLabel)
+            
+            NSLayoutConstraint.activate([
+                stack.topAnchor.constraint(equalTo: expandedContentView.topAnchor, constant: topSpacing),
+                stack.leadingAnchor.constraint(equalTo: expandedContentView.leadingAnchor),
+                stack.trailingAnchor.constraint(equalTo: expandedContentView.trailingAnchor)
+            ])
+            
+            lastView = stack
+            topSpacing += 40
+        }
+        
+        // 短语搭配
+        if !card.word.phrases.isEmpty {
+            let divider = UIView()
+            divider.backgroundColor = .separator
+            divider.translatesAutoresizingMaskIntoConstraints = false
+            expandedContentView.addSubview(divider)
+            
+            NSLayoutConstraint.activate([
+                divider.topAnchor.constraint(equalTo: (lastView ?? expandedContentView).bottomAnchor, constant: 20),
+                divider.leadingAnchor.constraint(equalTo: expandedContentView.leadingAnchor),
+                divider.trailingAnchor.constraint(equalTo: expandedContentView.trailingAnchor),
+                divider.heightAnchor.constraint(equalToConstant: 1)
+            ])
+            
+            let phraseTitle = UILabel()
+            phraseTitle.text = "常用搭配"
+            phraseTitle.font = .systemFont(ofSize: 18, weight: .semibold)
+            phraseTitle.textColor = .label
+            phraseTitle.translatesAutoresizingMaskIntoConstraints = false
+            expandedContentView.addSubview(phraseTitle)
+            
+            NSLayoutConstraint.activate([
+                phraseTitle.topAnchor.constraint(equalTo: divider.bottomAnchor, constant: 16),
+                phraseTitle.leadingAnchor.constraint(equalTo: expandedContentView.leadingAnchor)
+            ])
+            
+            lastView = phraseTitle
+            topSpacing = 0
+            
+            for phrase in card.word.phrases.prefix(3) {
+                let phraseView = UIView()
+                phraseView.backgroundColor = .systemGray6
+                phraseView.layer.cornerRadius = 10
+                phraseView.translatesAutoresizingMaskIntoConstraints = false
+                expandedContentView.addSubview(phraseView)
+                
+                let englishLabel = UILabel()
+                englishLabel.text = phrase.english
+                englishLabel.font = .systemFont(ofSize: 16, weight: .semibold)
+                englishLabel.textColor = .label
+                englishLabel.translatesAutoresizingMaskIntoConstraints = false
+                phraseView.addSubview(englishLabel)
+                
+                let chineseLabel = UILabel()
+                chineseLabel.text = phrase.chinese
+                chineseLabel.font = .systemFont(ofSize: 14)
+                chineseLabel.textColor = .secondaryLabel
+                chineseLabel.translatesAutoresizingMaskIntoConstraints = false
+                phraseView.addSubview(chineseLabel)
+                
+                NSLayoutConstraint.activate([
+                    phraseView.topAnchor.constraint(equalTo: (lastView ?? expandedContentView).bottomAnchor, constant: topSpacing + 12),
+                    phraseView.leadingAnchor.constraint(equalTo: expandedContentView.leadingAnchor),
+                    phraseView.trailingAnchor.constraint(equalTo: expandedContentView.trailingAnchor),
+                    
+                    englishLabel.topAnchor.constraint(equalTo: phraseView.topAnchor, constant: 12),
+                    englishLabel.leadingAnchor.constraint(equalTo: phraseView.leadingAnchor, constant: 12),
+                    englishLabel.trailingAnchor.constraint(equalTo: phraseView.trailingAnchor, constant: -12),
+                    
+                    chineseLabel.topAnchor.constraint(equalTo: englishLabel.bottomAnchor, constant: 4),
+                    chineseLabel.leadingAnchor.constraint(equalTo: phraseView.leadingAnchor, constant: 12),
+                    chineseLabel.trailingAnchor.constraint(equalTo: phraseView.trailingAnchor, constant: -12),
+                    chineseLabel.bottomAnchor.constraint(equalTo: phraseView.bottomAnchor, constant: -12)
+                ])
+                
+                lastView = phraseView
+                topSpacing = 0
+            }
+        }
+        
+        // 更新 contentView 高度
+        if let lastView = lastView {
+            NSLayoutConstraint.activate([
+                expandedContentView.bottomAnchor.constraint(equalTo: lastView.bottomAnchor, constant: 40)
+            ])
+        }
     }
     
     // MARK: - Actions
     
     @objc private func handleTap() {
-        guard card != nil else { return }
+        guard let card = card else { return }
         
         #if DEBUG
-        print("[WordCardUIView] 👆 点击卡片: \(card?.word.word ?? "unknown"), isExpanded: \(isExpanded)")
+        print("[WordCardUIView] 👆 点击卡片: \(card.word.word), isExpanded: \(isExpanded)")
         #endif
         
         isExpanded.toggle()
         
-        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0, options: .curveEaseInOut) {
-            self.updateExpandedState()
+        UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0) {
+            self.expandHintView.isHidden = self.isExpanded
+            self.expandedContentView.isHidden = !self.isExpanded
+            self.layoutIfNeeded()
         }
-    }
-    
-    // MARK: - Content Updates
-    
-    private func updateContent() {
-        guard let card = card else { return }
-        
-        let word = card.word
-        
-        // 基本信息
-        wordLabel.text = word.word
-        phoneticLabel.text = word.phonetic ?? ""
-        phoneticLabel.isHidden = word.phonetic == nil
-        
-        // 主要释义
-        if let firstTranslation = word.translations.first {
-            partOfSpeechTag.text = " \(firstTranslation.displayPartOfSpeech) "
-            meaningLabel.text = firstTranslation.meaning
-            primaryMeaningContainer.isHidden = false
-        } else {
-            primaryMeaningContainer.isHidden = true
-        }
-        
-        // 所有释义
-        translationsStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        for translation in word.translations {
-            let row = createTranslationRow(translation: translation)
-            translationsStack.addArrangedSubview(row)
-        }
-        
-        // 短语
-        phrasesStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
-        let phrasesToShow = Array(word.phrases.prefix(3))
-        if !phrasesToShow.isEmpty {
-            for phrase in phrasesToShow {
-                let phraseView = createPhraseView(phrase: phrase)
-                phrasesStack.addArrangedSubview(phraseView)
-            }
-            phrasesTitle.isHidden = false
-            phrasesStack.isHidden = false
-        } else {
-            phrasesTitle.isHidden = true
-            phrasesStack.isHidden = true
-        }
-        
-        // 重置展开状态
-        isExpanded = false
-        updateExpandedState()
-    }
-    
-    private func updateExpandedState() {
-        expandHintContainer.isHidden = isExpanded
-        expandedContentStack.isHidden = !isExpanded
         
         #if DEBUG
         print("[WordCardUIView] ✅ 展开状态更新: \(isExpanded)")
         #endif
     }
     
-    private func createTranslationRow(translation: Word.Translation) -> UIView {
-        let container = UIView()
-        
-        let posLabel = UILabel()
-        posLabel.text = " \(translation.displayPartOfSpeech) "
-        posLabel.font = UIFont.systemFont(ofSize: 12, weight: .bold)
-        posLabel.textColor = .white
-        posLabel.backgroundColor = UIColor.systemBlue.withAlphaComponent(0.6)
-        posLabel.textAlignment = .center
-        posLabel.layer.cornerRadius = 6
-        posLabel.layer.masksToBounds = true
-        
-        let meaningLabel = UILabel()
-        meaningLabel.text = translation.meaning
-        meaningLabel.font = UIFont.systemFont(ofSize: 16)
-        meaningLabel.textColor = .label
-        meaningLabel.numberOfLines = 0
-        
-        container.addSubview(posLabel)
-        container.addSubview(meaningLabel)
-        
-        posLabel.translatesAutoresizingMaskIntoConstraints = false
-        meaningLabel.translatesAutoresizingMaskIntoConstraints = false
-        
-        NSLayoutConstraint.activate([
-            posLabel.topAnchor.constraint(equalTo: container.topAnchor),
-            posLabel.leadingAnchor.constraint(equalTo: container.leadingAnchor),
-            posLabel.heightAnchor.constraint(equalToConstant: 24),
-            posLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 50),
-            
-            meaningLabel.topAnchor.constraint(equalTo: container.topAnchor),
-            meaningLabel.leadingAnchor.constraint(equalTo: posLabel.trailingAnchor, constant: 12),
-            meaningLabel.trailingAnchor.constraint(equalTo: container.trailingAnchor),
-            meaningLabel.bottomAnchor.constraint(equalTo: container.bottomAnchor)
-        ])
-        
-        return container
-    }
-    
-    private func createPhraseView(phrase: Word.Phrase) -> UIView {
-        let container = UIView()
-        container.backgroundColor = UIColor.systemGray.withAlphaComponent(0.1)
-        container.layer.cornerRadius = 10
-        
-        let stack = UIStackView()
-        stack.axis = .vertical
-        stack.spacing = 4
-        stack.alignment = .leading
-        
-        let englishLabel = UILabel()
-        englishLabel.text = phrase.english
-        englishLabel.font = UIFont.systemFont(ofSize: 16, weight: .semibold)
-        englishLabel.textColor = .label
-        englishLabel.numberOfLines = 0
-        
-        let chineseLabel = UILabel()
-        chineseLabel.text = phrase.chinese
-        chineseLabel.font = UIFont.systemFont(ofSize: 14)
-        chineseLabel.textColor = .secondaryLabel
-        chineseLabel.numberOfLines = 0
-        
-        stack.addArrangedSubview(englishLabel)
-        stack.addArrangedSubview(chineseLabel)
-        
-        container.addSubview(stack)
-        stack.translatesAutoresizingMaskIntoConstraints = false
-        
-        NSLayoutConstraint.activate([
-            stack.topAnchor.constraint(equalTo: container.topAnchor, constant: 12),
-            stack.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 12),
-            stack.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -12),
-            stack.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -12)
-        ])
-        
-        return container
-    }
-    
-    // MARK: - Direction Indicators
+    // MARK: - Direction Indicator
     
     func updateDirectionIndicator(offset: CGFloat) {
-        let threshold: CGFloat = 30
-        let maxOpacity: CGFloat = 1.0
-        let maxOffset: CGFloat = 120
+        let percentage = min(abs(offset) / 200.0, 1.0)
         
-        if offset > threshold {
-            let progress = min((offset - threshold) / maxOffset, maxOpacity)
-            rightIndicator.alpha = progress
+        if offset > 0 {
+            // 右滑（会写）
+            rightIndicator.alpha = percentage
             leftIndicator.alpha = 0
-        } else if offset < -threshold {
-            let progress = min((abs(offset) - threshold) / maxOffset, maxOpacity)
-            leftIndicator.alpha = progress
+        } else if offset < 0 {
+            // 左滑（不会写）
+            leftIndicator.alpha = percentage
             rightIndicator.alpha = 0
         } else {
-            rightIndicator.alpha = 0
-            leftIndicator.alpha = 0
+            // ⭐ 修复：当 offset 为 0 时，重置指示器
+            resetDirectionIndicators()
+        }
+    }
+    
+    // ⭐ 新增：重置方向指示器（用于拖拽取消时）
+    func resetDirectionIndicators() {
+        UIView.animate(withDuration: 0.2) {
+            self.rightIndicator.alpha = 0
+            self.leftIndicator.alpha = 0
         }
     }
 }
+
+// MARK: - UIScrollViewDelegate
+
+extension WordCardUIView: UIScrollViewDelegate {
+    // 可以在这里处理滚动事件
+}
+
 

@@ -161,8 +161,10 @@ struct SwipeCardsView: View {
             Spacer()
             
             // 剩余次数
-            if let currentCard = viewModel.visibleCards.first {
-                Text("剩 \(currentCard.record.remainingExposures) 次")
+            // ⭐ P0 修复：从 learningRecords 获取最新数据，而不是使用过时的 card.record
+            if let currentCard = viewModel.visibleCards.first,
+               let record = viewModel.getLearningRecord(for: currentCard.word.id) {
+                Text("剩 \(record.remainingExposures) 次")
                     .font(.headline)
                     .foregroundColor(.white)
                     .padding(.horizontal, 16)
@@ -533,7 +535,7 @@ private struct InteractiveCard: View {
 
 // MARK: - 完成视图
 
-struct CompletionView: View {
+private struct CompletionView: View {
     var body: some View {
         ZStack {
             Color.black.opacity(0.8)

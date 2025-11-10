@@ -86,7 +86,7 @@
 ```
 ┌─────────────────────────────────────────────┐
 │              SwiftUI Views                  │  ← UI 层
-│  - MainTabView, ZLSwipeCardsView            │
+│  - MainTabView, KolodaCardsView            │
 └──────────────────┬──────────────────────────┘
                    │ @EnvironmentObject
                    ▼
@@ -410,7 +410,7 @@ Models/         ✅ 数据模型
 
 - [完整架构审查](./ARCHITECTURE_AUDIT_2025.md) - 详细分析
 - [快速改进指南](./QUICK_WINS_ARCHITECTURE.md) - 立即可执行
-- [ZLSwipeableView 实现](./ZLSWIPEABLE_IMPLEMENTATION_COMPLETE.md) - 滑卡架构
+- [Koloda 实现](./KOLODA_IMPLEMENTATION_COMPLETE.md) - 滑卡架构
 
 ---
 

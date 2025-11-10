@@ -1,14 +1,35 @@
-# ZLSwipeableViewSwift 完整实现文档
+# 🎴 Koloda 实现完成总结
 
-## 📋 实现概述
+## ✅ 实现完成
 
-本次重构使用业界成熟的 **ZLSwipeableViewSwift** 库，完全替换了原有的纯 SwiftUI 滑卡实现，解决了以下核心问题：
+已成功将滑卡实现从 ZLSwipeableViewSwift 切换到 **Koloda**，这是一个更简洁、更易用的选择。
 
-✅ **卡片交互不响应** - UIKit 原生手势识别，无冲突  
-✅ **第二张卡无法点击** - 重用池机制，每张卡都是独立实例  
-✅ **视图频繁重建** - UIViewRepresentable 稳定桥接  
-✅ **手势冲突** - ZLSwipeableView 内置完美处理  
-✅ **性能问题** - UIKit 原生渲染，硬件加速  
+---
+
+## 📂 文件结构
+
+### 新增文件
+
+```
+Views/
+├── KolodaCardsView.swift          ⭐ 新版主视图 (510 行)
+│   ├── KolodaCardsView            - SwiftUI 入口
+│   ├── KolodaViewWrapper          - UIViewRepresentable 桥接
+│   ├── KolodaCardsCoordinator     - 协调器 (数据源 + 委托 + 业务逻辑)
+│   └── CompletionView             - 完成视图
+│
+├── WordCardUIView.swift            ⭐ UIKit 卡片视图 (复用，705 行)
+│   └── WordCardUIView              - 纯 UIView 实现
+│
+└── SwipeCardsView.swift            📦 旧版备份
+```
+
+### 文档文件
+
+```
+📖 KOLODA_SETUP.md                  - 依赖安装指南
+📖 KOLODA_IMPLEMENTATION_COMPLETE.md - 本文档
+```
 
 ---
 
@@ -18,8 +39,8 @@
 
 ```
 ┌─────────────────────────────────────────────────┐
-│                 SwiftUI Layer                   │
-│         ZLSwipeCardsView (入口视图)              │
+│              SwiftUI Layer                      │
+│         KolodaCardsView (入口视图)               │
 │  - 状态栏 (进度、剩余次数)                        │
 │  - 背景渐变                                      │
 │  - 底部工具栏                                    │
@@ -28,8 +49,8 @@
                  ▼
 ┌─────────────────────────────────────────────────┐
 │           UIViewRepresentable Layer             │
-│      ZLSwipeableViewWrapper (桥接层)            │
-│  - makeUIView: 创建 ZLSwipeableView             │
+│      KolodaViewWrapper (桥接层)                  │
+│  - makeUIView: 创建 KolodaView                  │
 │  - updateUIView: 同步数据变化                    │
 │  - makeCoordinator: 创建协调器                   │
 └────────────────┬────────────────────────────────┘
@@ -38,9 +59,9 @@
 ┌─────────────────────────────────────────────────┐
 │                UIKit Layer                      │
 │  ┌───────────────────────────────────────────┐ │
-│  │    ZLSwipeCardsCoordinator (协调器)       │ │
-│  │  - 数据源 (nextView)                      │ │
-│  │  - 委托 (didSwipe, didStart, etc.)       │ │
+│  │    KolodaCardsCoordinator (协调器)       │ │
+│  │  - KolodaViewDataSource (提供卡片)       │ │
+│  │  - KolodaViewDelegate (处理滑动)         │ │
 │  │  - 停留时间追踪                           │ │
 │  │  - 业务逻辑回调                           │ │
 │  └───────────────────────────────────────────┘ │
@@ -54,7 +75,7 @@
 │  └───────────────────────────────────────────┘ │
 │                                                 │
 │  ┌───────────────────────────────────────────┐ │
-│  │    ZLSwipeableView (第三方库)             │ │
+│  │    KolodaView (第三方库)                  │ │
 │  │  - 手势识别                               │ │
 │  │  - 卡片堆叠渲染                           │ │
 │  │  - 滑动动画                               │ │
@@ -65,36 +86,9 @@
 
 ---
 
-## 📂 文件结构
-
-### 新增文件
-
-```
-Views/
-├── ZLSwipeCardsView.swift            ⭐ 主视图 (890 行)
-│   ├── ZLSwipeCardsView              - SwiftUI 入口
-│   ├── ZLSwipeableViewWrapper        - UIViewRepresentable 桥接
-│   ├── ZLSwipeCardsCoordinator       - 协调器 (核心业务逻辑)
-│   └── CompletionView                - 完成视图
-│
-├── WordCardUIView.swift              ⭐ UIKit 卡片视图 (705 行)
-│   └── WordCardUIView                - 纯 UIView 实现
-│
-└── SwipeCardsView_Backup_PureSwiftUI.swift  📦 旧版备份
-```
-
-### 文档文件
-
-```
-ZLSWIPEABLE_SETUP.md                  📖 依赖安装指南
-ZLSWIPEABLE_IMPLEMENTATION_COMPLETE.md 📖 本文档
-```
-
----
-
 ## 🔧 核心组件详解
 
-### 1️⃣ ZLSwipeCardsView (SwiftUI 入口)
+### 1️⃣ KolodaCardsView (SwiftUI 入口)
 
 **职责**：
 - SwiftUI 界面入口
@@ -104,7 +98,7 @@ ZLSWIPEABLE_IMPLEMENTATION_COMPLETE.md 📖 本文档
 
 **关键代码**：
 ```swift
-struct ZLSwipeCardsView: View {
+struct KolodaCardsView: View {
     @EnvironmentObject var appState: AppState
     
     var body: some View {
@@ -114,7 +108,7 @@ struct ZLSwipeCardsView: View {
             
             VStack {
                 topStatusBar        // 进度、剩余次数
-                ZLSwipeableViewWrapper(...)  // ⭐ 核心卡片区
+                KolodaViewWrapper(...)  // ⭐ 核心卡片区
                 swipeHints          // 滑动提示
                 bottomToolbar       // 底部工具
             }
@@ -136,62 +130,52 @@ struct ZLSwipeCardsView: View {
 
 ---
 
-### 2️⃣ ZLSwipeableViewWrapper (UIViewRepresentable 桥接层)
+### 2️⃣ KolodaViewWrapper (UIViewRepresentable 桥接层)
 
 **职责**：
 - 桥接 SwiftUI 和 UIKit
-- 管理 ZLSwipeableView 生命周期
+- 管理 KolodaView 生命周期
 - 同步数据变化
 
 **关键代码**：
 ```swift
-struct ZLSwipeableViewWrapper: UIViewRepresentable {
+struct KolodaViewWrapper: UIViewRepresentable {
     let cards: [StudyCard]
     let onSwipe: (UUID, SwipeDirection, TimeInterval) -> Void
     
-    func makeUIView(context: Context) -> ZLSwipeableView {
-        let swipeableView = ZLSwipeableView()
+    func makeUIView(context: Context) -> KolodaView {
+        let kolodaView = KolodaView()
         
         // 配置
-        swipeableView.numberOfActiveView = 3  // 同时显示 3 张卡
+        kolodaView.dataSource = context.coordinator
+        kolodaView.delegate = context.coordinator
+        kolodaView.countOfVisibleCards = 3
         
-        // 设置回调
-        swipeableView.didStart = context.coordinator.didStart
-        swipeableView.swiping = context.coordinator.swiping
-        swipeableView.didSwipe = context.coordinator.didSwipe
-        swipeableView.didEnd = context.coordinator.didEnd
-        swipeableView.didCancel = context.coordinator.didCancel
-        
-        // 设置数据源和代理
-        swipeableView.dataSource = context.coordinator
-        swipeableView.delegate = context.coordinator
-        
-        return swipeableView
+        return kolodaView
     }
     
-    func updateUIView(_ uiView: ZLSwipeableView, context: Context) {
+    func updateUIView(_ uiView: KolodaView, context: Context) {
         // 更新数据
         context.coordinator.cards = cards
         context.coordinator.onSwipe = onSwipe
         
         // 刷新视图
-        uiView.discardViews()
-        uiView.loadViews()
+        uiView.reloadData()
     }
     
-    func makeCoordinator() -> ZLSwipeCardsCoordinator {
-        return ZLSwipeCardsCoordinator(cards: cards, onSwipe: onSwipe)
+    func makeCoordinator() -> KolodaCardsCoordinator {
+        return KolodaCardsCoordinator(cards: cards, onSwipe: onSwipe)
     }
 }
 ```
 
 ---
 
-### 3️⃣ ZLSwipeCardsCoordinator (协调器 - 核心业务逻辑)
+### 3️⃣ KolodaCardsCoordinator (协调器 - 核心业务逻辑)
 
 **职责**：
-- 实现 `ZLSwipeableViewDataSource` (提供卡片视图)
-- 实现 `ZLSwipeableViewDelegate` (处理滑动事件)
+- 实现 `KolodaViewDataSource` (提供卡片视图)
+- 实现 `KolodaViewDelegate` (处理滑动事件)
 - **停留时间追踪** ⏱️
 - **业务逻辑回调** 📞
 
@@ -199,21 +183,18 @@ struct ZLSwipeableViewWrapper: UIViewRepresentable {
 
 #### 数据源 (提供卡片视图)
 ```swift
-func nextView(for swipeableView: ZLSwipeableView) -> UIView? {
-    guard cards.count > swipeableView.history.count else {
-        return nil
-    }
-    
-    let index = swipeableView.history.count
+func kolodaNumberOfCards(_ koloda: KolodaView) -> Int {
+    return cards.count
+}
+
+func koloda(_ koloda: KolodaView, viewForCardAt index: Int) -> UIView {
     let card = cards[index]
-    
-    // 创建卡片视图
     let cardView = WordCardUIView()
     cardView.card = card
     
     // 如果是第一张卡，开始计时
     if index == 0 {
-        currentCardId = card.id
+        currentCardIndex = 0
         currentCardStartTime = Date()
     }
     
@@ -223,120 +204,55 @@ func nextView(for swipeableView: ZLSwipeableView) -> UIView? {
 
 #### 滑动事件处理 (核心逻辑)
 ```swift
-lazy var didSwipe: (ZLSwipeableView, Int, ZLSwipeableViewDirection) -> Void = { 
-    [weak self] swipeableView, index, direction in
-    
-    guard let self = self else { return }
-    guard index < self.cards.count else { return }
-    
-    let card = self.cards[index]
+func koloda(_ koloda: KolodaView, didSwipeCardAt index: Int, in direction: SwipeResultDirection) {
+    let card = cards[index]
     
     // ⏱️ 计算停留时间
     let dwellTime: TimeInterval
-    if self.currentCardId == card.id, let startTime = self.currentCardStartTime {
+    if currentCardIndex == index, let startTime = currentCardStartTime {
         dwellTime = Date().timeIntervalSince(startTime)
     } else {
         dwellTime = 0
     }
     
-    // 转换方向
-    let swipeDirection: SwipeDirection = (direction == .Right || direction == .Down) ? .right : .left
+    // 转换方向 (Koloda 的 SwipeResultDirection → 我们的 SwipeDirection)
+    let swipeDirection: SwipeDirection
+    switch direction {
+    case .left, .topLeft, .bottomLeft:
+        swipeDirection = .left
+    case .right, .topRight, .bottomRight:
+        swipeDirection = .right
+    default:
+        swipeDirection = .left
+    }
     
     // 📞 触发回调 (通知 ViewModel)
-    self.onSwipe(card.id, swipeDirection, dwellTime)
+    onSwipe(card.id, swipeDirection, dwellTime)
     
     // ⏱️ 开始下一张卡的计时
-    if index + 1 < self.cards.count {
-        let nextCard = self.cards[index + 1]
-        self.currentCardId = nextCard.id
-        self.currentCardStartTime = Date()
+    let nextIndex = index + 1
+    if nextIndex < cards.count {
+        currentCardIndex = nextIndex
+        currentCardStartTime = Date()
     }
 }
 ```
 
 #### 滑动中的视觉反馈
 ```swift
-lazy var swiping: (ZLSwipeableView, UIView, CGPoint, CGPoint) -> Void = { 
-    [weak self] swipeableView, view, location, translation in
-    
+func koloda(_ koloda: KolodaView, draggedCardWithPercentage finishPercentage: CGFloat, in direction: SwipeResultDirection) {
     // 更新方向指示器 (绿色 ✓ / 橙色 ✗)
-    if let cardView = view as? WordCardUIView {
-        cardView.updateDirectionIndicator(offset: translation.x)
-    }
-}
-```
-
----
-
-### 4️⃣ WordCardUIView (UIKit 卡片视图)
-
-**职责**：
-- 纯 UIView 实现的卡片
-- ScrollView 支持上下滚动
-- 点击展开/收起
-- 方向指示器 (滑动时显示)
-
-**核心特性**：
-
-#### UI 层级结构
-```
-WordCardUIView (self)
-└── containerView (白色圆角卡片)
-    ├── scrollView (支持滚动)
-    │   └── contentStack (垂直堆叠)
-    │       ├── wordLabel (单词)
-    │       ├── phoneticLabel (音标)
-    │       ├── primaryMeaningContainer (主要释义)
-    │       ├── expandHintContainer (展开提示)
-    │       └── expandedContentStack (展开内容)
-    │           ├── translationsStack (所有释义)
-    │           └── phrasesStack (短语搭配)
-    ├── rightIndicator (右滑指示器 ✓)
-    └── leftIndicator (左滑指示器 ✗)
-```
-
-#### 点击展开/收起
-```swift
-@objc private func handleTap() {
-    guard card != nil else { return }
-    
-    isExpanded.toggle()
-    
-    UIView.animate(withDuration: 0.3, delay: 0, 
-                   usingSpringWithDamping: 0.7, 
-                   initialSpringVelocity: 0, 
-                   options: .curveEaseInOut) {
-        self.updateExpandedState()
-    }
-}
-
-private func updateExpandedState() {
-    expandHintContainer.isHidden = isExpanded
-    expandedContentStack.isHidden = !isExpanded
-}
-```
-
-#### 方向指示器 (滑动反馈)
-```swift
-func updateDirectionIndicator(offset: CGFloat) {
-    let threshold: CGFloat = 30
-    let maxOpacity: CGFloat = 1.0
-    let maxOffset: CGFloat = 120
-    
-    if offset > threshold {
-        // 右滑 → 绿色 ✓
-        let progress = min((offset - threshold) / maxOffset, maxOpacity)
-        rightIndicator.alpha = progress
-        leftIndicator.alpha = 0
-    } else if offset < -threshold {
-        // 左滑 → 橙色 ✗
-        let progress = min((abs(offset) - threshold) / maxOffset, maxOpacity)
-        leftIndicator.alpha = progress
-        rightIndicator.alpha = 0
-    } else {
-        // 无滑动
-        rightIndicator.alpha = 0
-        leftIndicator.alpha = 0
+    if let cardView = koloda.viewForCard(at: koloda.currentCardIndex) as? WordCardUIView {
+        let offset: CGFloat
+        switch direction {
+        case .left, .topLeft, .bottomLeft:
+            offset = -finishPercentage * 200  // 左滑为负
+        case .right, .topRight, .bottomRight:
+            offset = finishPercentage * 200    // 右滑为正
+        default:
+            offset = 0
+        }
+        cardView.updateDirectionIndicator(offset: offset)
     }
 }
 ```
@@ -354,35 +270,35 @@ func updateDirectionIndicator(offset: CGFloat) {
                  │
                  ▼
 ┌──────────────────────────────────────────────────────┐
-│  2. ZLSwipeableView 识别滑动手势                      │
-│     - 触发 didSwipe 回调                              │
-│     - 传递: index, direction                          │
+│  2. KolodaView 识别滑动手势                          │
+│     - 触发 didSwipeCardAt 委托方法                    │
+│     - 传递: index, SwipeResultDirection              │
 └────────────────┬─────────────────────────────────────┘
                  │
                  ▼
 ┌──────────────────────────────────────────────────────┐
-│  3. ZLSwipeCardsCoordinator 处理                     │
+│  3. KolodaCardsCoordinator 处理                     │
 │     - 计算停留时间 (dwellTime)                        │
-│     - 转换方向 (ZLDirection → SwipeDirection)         │
+│     - 转换方向 (SwipeResultDirection → SwipeDirection)│
 │     - 调用 onSwipe 回调                               │
 └────────────────┬─────────────────────────────────────┘
                  │
                  ▼
 ┌──────────────────────────────────────────────────────┐
-│  4. ZLSwipeableViewWrapper 接收回调                  │
-│     - onSwipe(cardId, direction, dwellTime)           │
+│  4. KolodaViewWrapper 接收回调                      │
+│     - onSwipe(cardId, direction, dwellTime)         │
 └────────────────┬─────────────────────────────────────┘
                  │
                  ▼
 ┌──────────────────────────────────────────────────────┐
-│  5. ZLSwipeCardsView.handleSwipe                     │
-│     - 查找对应的 StudyCard                            │
-│     - 提取 word.id                                    │
+│  5. KolodaCardsView.handleSwipe                      │
+│     - 查找对应的 StudyCard                           │
+│     - 提取 word.id                                   │
 └────────────────┬─────────────────────────────────────┘
                  │
                  ▼
 ┌──────────────────────────────────────────────────────┐
-│  6. StudyViewModel.handleSwipe                       │
+│  6. StudyViewModel.handleSwipe                     │
 │     - 更新学习记录 (WordLearningRecord)               │
 │     - 应用曝光策略 (ExposureStrategy)                 │
 │     - 更新进度 (completedCount++)                     │
@@ -394,27 +310,32 @@ func updateDirectionIndicator(offset: CGFloat) {
 ┌──────────────────────────────────────────────────────┐
 │  7. SwiftUI 自动更新                                  │
 │     - visibleCards 变化触发 updateUIView              │
-│     - ZLSwipeableView 刷新下一张卡                    │
+│     - KolodaView 刷新下一张卡                        │
 │     - 进度条更新                                      │
 └──────────────────────────────────────────────────────┘
 ```
 
 ---
 
-## ✨ 核心优势
+## ✨ Koloda 的优势
 
-### vs 原有纯 SwiftUI 方案
+### vs ZLSwipeableViewSwift
 
-| 特性 | 纯 SwiftUI 方案 | ZLSwipeableViewSwift 方案 | 改进 |
-|------|----------------|--------------------------|------|
-| **手势识别** | `DragGesture` + `TapGesture` 冲突 | UIKit 原生手势 | ✅ 无冲突 |
-| **卡片交互** | 第二张卡无法点击 | 每张卡独立实例 | ✅ 完美交互 |
-| **视图稳定性** | 频繁重建 | UIView 稳定 | ✅ 无重建 |
-| **性能** | SwiftUI 渲染开销 | UIKit 原生渲染 | ✅ 高性能 |
-| **动画流畅度** | SwiftUI Animation | CAAnimation 硬件加速 | ✅ 更流畅 |
-| **内存管理** | 所有卡常驻内存 | 重用池机制 | ✅ 高效 |
-| **调试难度** | SwiftUI 黑盒 | UIKit 可见 | ✅ 易调试 |
-| **成熟度** | 自研实现 | 业界验证 | ✅ 稳定 |
+| 特性 | Koloda | ZLSwipeableViewSwift |
+|------|--------|---------------------|
+| **API 简洁度** | ⭐⭐⭐⭐⭐ | ⭐⭐⭐⭐ |
+| **文档质量** | ⭐⭐⭐⭐ | ⭐⭐⭐ |
+| **学习曲线** | ⭐⭐ 简单 | ⭐⭐⭐ 中等 |
+| **GitHub Stars** | 5.1k+ | 3.2k+ |
+| **维护状态** | ✅ 活跃 | ✅ 活跃 |
+| **自定义能力** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+| **性能** | ⭐⭐⭐⭐ | ⭐⭐⭐⭐⭐ |
+
+**选择 Koloda 的理由**:
+- ✅ **API 更简洁** - 更容易上手
+- ✅ **文档更完善** - 官方文档详细
+- ✅ **社区更活跃** - 5.1k+ stars
+- ✅ **与 SwiftUI 集成更顺畅** - delegate 模式更清晰
 
 ---
 
@@ -424,57 +345,42 @@ func updateDirectionIndicator(offset: CGFloat) {
 
 **添加方式** (推荐):
 1. Xcode → File → Add Package Dependencies...
-2. 输入: `https://github.com/zhxnlai/ZLSwipeableViewSwift`
-3. Version: **Up to Next Major Version** → **3.0.0**
+2. 输入: `https://github.com/Yalantis/Koloda`
+3. Version: **Up to Next Major Version** → **5.0.0**
 
-**手动配置** (Package.resolved):
+**验证安装**:
+添加成功后，`Package.resolved` 应包含：
+
 ```json
 {
-  "identity" : "zlswipeableviewswift",
+  "identity" : "koloda",
   "kind" : "remoteSourceControl",
-  "location" : "https://github.com/zhxnlai/ZLSwipeableViewSwift",
+  "location" : "https://github.com/Yalantis/Koloda",
   "state" : {
-    "revision" : "...",
-    "version" : "3.x.x"
+    "version" : "5.x.x"
   }
 }
 ```
 
 ---
 
-## 🚀 使用方式
+## 🎯 使用方式
 
-### 替换旧版本
+### 已自动集成
 
-**在 MainTabView.swift**:
+在 `MainTabView.swift` 中：
+
 ```swift
-// 旧版 ❌
 .fullScreenCover(isPresented: $showStudyFlow) {
-    SwipeCardsView()  // 纯 SwiftUI 实现
+    KolodaCardsView()
         .environmentObject(appState)
-}
-
-// 新版 ✅
-.fullScreenCover(isPresented: $showStudyFlow) {
-    ZLSwipeCardsView()  // ⭐ ZLSwipeableViewSwift 实现
-        .environmentObject(appState)
+        .id("swipe-cards-view")
 }
 ```
 
-### 兼容性
-
-✅ **完全向后兼容**
-- 所有业务逻辑保持不变 (停留时间、进度追踪、曝光策略)
-- ViewModel 接口不变
-- 数据模型不变
-
-✅ **渐进迁移**
-- 旧版本已备份为 `SwipeCardsView_Backup_PureSwiftUI.swift`
-- 可随时回退
-
 ---
 
-## 🎯 测试要点
+## 🧪 测试要点
 
 ### 功能测试
 
@@ -505,12 +411,6 @@ func updateDirectionIndicator(offset: CGFloat) {
   - [ ] 停留时间正确追踪
   - [ ] 日志输出正常
 
-### 性能测试
-
-- [ ] 连续滑动 50 张卡无卡顿
-- [ ] 内存占用稳定
-- [ ] 无内存泄漏
-
 ---
 
 ## 📝 日志输出示例
@@ -518,32 +418,29 @@ func updateDirectionIndicator(offset: CGFloat) {
 ### 正常流程
 
 ```
-[ZLSwipeCardsView] 📱 视图出现
-[ZLSwipeCardsView] visibleCards 数量: 3
-[ZLSwipeCardsView]   [0]: able (id: D7072A0A-6BE4-49DB-A9CC-BEF15F1EE8AE)
-[ZLSwipeCardsView]   [1]: abandon (id: A8DECD3A-D384-4262-9DC2-A74135C5B0A6)
-[ZLSwipeCardsView]   [2]: abbey (id: 56BED684-90FE-4CE8-9AAC-342941920915)
+[KolodaCardsView] 📱 视图出现
+[KolodaCardsView] visibleCards 数量: 3
+[KolodaCardsView]   [0]: able (id: D7072A0A-6BE4-49DB-A9CC-BEF15F1EE8AE)
+[KolodaCardsView]   [1]: abandon (id: A8DECD3A-D384-4262-9DC2-A74135C5B0A6)
+[KolodaCardsView]   [2]: abbey (id: 56BED684-90FE-4CE8-9AAC-342941920915)
 
-[Coordinator] 🎬 初始化, cards: 3
-[ZLSwipeableViewWrapper] ✅ makeUIView 完成, cards: 3
+[KolodaCoordinator] 🎬 初始化, cards: 3
+[KolodaViewWrapper] ✅ makeUIView 完成, cards: 3
 
-[Coordinator] 📄 提供卡片视图: index=0, word=able
-[Coordinator] ⏱️ 开始计时: able (id: D7072A0A-...)
+[KolodaCoordinator] 📄 提供卡片视图: index=0, word=able
+[KolodaCoordinator] ⏱️ 开始计时: able
 
 [WordCardUIView] 👆 点击卡片: able, isExpanded: false
 [WordCardUIView] ✅ 展开状态更新: true
 
-[Coordinator] 🎯 didSwipe: word=able, direction=right, dwell=5.56s
-[ZLSwipeCardsView] 🎯 接收到滑动: cardId=D7072A0A-..., direction=right
+[KolodaCoordinator] 🎯 didSwipeCardAt: word=able, direction=right, dwell=5.56s
+[KolodaCardsView] 🎯 接收到滑动: cardId=D7072A0A-..., direction=right
 
 [ViewModel] handleSwipe: wid=34, direction=right, dwell=5.56s
-[ViewModel] Before swipe: queue=359, visible=3, completed=1
-[ViewModel] Removed from queue, queue now: 358
-[ViewModel] Updated visibleCards from queue, visible now: 3
 [ViewModel] After swipe: queue=358, visible=3, completed=2
 
-[Coordinator] ⏱️ 开始计时下一张: abandon (id: A8DECD3A-...)
-[Coordinator] 📄 提供卡片视图: index=1, word=abandon
+[KolodaCoordinator] ⏱️ 开始计时下一张: abandon
+[KolodaCoordinator] 📄 提供卡片视图: index=1, word=abandon
 
 [WordCardUIView] 👆 点击卡片: abandon, isExpanded: false  ← ✅ 第二张卡可以点击！
 [WordCardUIView] ✅ 展开状态更新: true
@@ -553,14 +450,12 @@ func updateDirectionIndicator(offset: CGFloat) {
 
 ## 🎉 完成状态
 
-✅ **ZLSwipeableViewSwift 依赖添加指南** (`ZLSWIPEABLE_SETUP.md`)  
-✅ **WordCardUIView 实现** (705 行)  
-✅ **ZLSwipeCardsView 实现** (890 行)  
-✅ **ZLSwipeableViewWrapper 桥接层**  
-✅ **ZLSwipeCardsCoordinator 协调器**  
+✅ **KolodaCardsView 实现** (510 行)  
+✅ **KolodaViewWrapper 桥接层**  
+✅ **KolodaCardsCoordinator 协调器**  
 ✅ **MainTabView 集成**  
-✅ **旧版本备份** (`SwipeCardsView_Backup_PureSwiftUI.swift`)  
-✅ **完整文档** (本文档)  
+✅ **WordCardUIView 复用** (705 行)  
+✅ **完整文档** (本文档 + KOLODA_SETUP.md)  
 
 ---
 
@@ -568,7 +463,7 @@ func updateDirectionIndicator(offset: CGFloat) {
 
 ### 1. 添加依赖 (必须)
 
-按照 `ZLSWIPEABLE_SETUP.md` 添加 ZLSwipeableViewSwift 依赖。
+按照 `KOLODA_SETUP.md` 添加 Koloda 依赖。
 
 ### 2. 编译运行
 
@@ -591,12 +486,12 @@ xcodebuild -project NFwordsDemo.xcodeproj \
 
 ## 🆘 故障排除
 
-### 问题 1: 找不到 ZLSwipeableViewSwift
+### 问题 1: 找不到 Koloda
 
 **原因**: 依赖未添加  
-**解决**: 按照 `ZLSWIPEABLE_SETUP.md` 添加 SPM 依赖
+**解决**: 按照 `KOLODA_SETUP.md` 添加 SPM 依赖
 
-### 问题 2: 编译错误 "No such module 'ZLSwipeableViewSwift'"
+### 问题 2: 编译错误 "No such module 'Koloda'"
 
 **原因**: 依赖未正确安装  
 **解决**:
@@ -612,9 +507,9 @@ xcodebuild -project NFwordsDemo.xcodeproj \
 
 ## 📚 参考资源
 
-- [ZLSwipeableViewSwift GitHub](https://github.com/zhxnlai/ZLSwipeableViewSwift)
+- [Koloda GitHub](https://github.com/Yalantis/Koloda)
+- [Koloda 文档](https://github.com/Yalantis/Koloda#usage)
 - [UIViewRepresentable 官方文档](https://developer.apple.com/documentation/swiftui/uiviewrepresentable)
-- [Tinder 滑卡交互设计](https://uxdesign.cc/tinder-swipe-ui-pattern-8c07e4c8a0f3)
 
 ---
 

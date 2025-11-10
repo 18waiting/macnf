@@ -169,8 +169,8 @@ struct LearningHomeView: View {
             showLibrary = true
         }
         .fullScreenCover(isPresented: $showStudyFlow) {
-            // ⭐ 使用 ZLSwipeableViewSwift 重构版本 (基于 UIKit)
-            ZLSwipeCardsView()
+            // ⭐ 使用 Koloda 实现（手动集成版本）
+            KolodaCardsView()
                 .environmentObject(appState)
                 .id("swipe-cards-view")
         }

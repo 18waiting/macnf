@@ -27,9 +27,15 @@ class StudyViewModel: ObservableObject {
     @Published var currentGoal: LearningGoal?
     @Published var currentTask: DailyTask?
     @Published var currentReport: DailyReport?
+    @Published var queueCount: Int = 0  // ⭐ 新增：用于触发 totalCount 的 UI 更新
     
     // MARK: - Private Properties
-    private var queue: [StudyCard] = []
+    private var queue: [StudyCard] = [] {
+        didSet {
+            // ⭐ 修复：当队列变化时，更新 queueCount 以触发 UI 更新
+            queueCount = queue.count
+        }
+    }
     private var learningRecords: [Int: WordLearningRecord] = [:]  // wid -> record
     private var startTime = Date()
     private var timer: Timer?
@@ -52,8 +58,21 @@ class StudyViewModel: ObservableObject {
     private var exposureStrategy: ExposureStrategy = ExposureStrategyFactory.defaultStrategy()
     
     // MARK: - Computed Properties
+    // ⭐ 修复：使用 @Published 属性确保 UI 更新
     var totalCount: Int {
-        currentTask?.totalExposures ?? (queue.count + completedCount)
+        // ⭐ 修复：始终使用 queueCount + completedCount 来计算总数
+        // 这样进度会随着队列变化而更新
+        let total = queueCount + completedCount
+        
+        #if DEBUG
+        if let task = currentTask, task.totalExposures > 0 {
+            print("[ViewModel] totalCount: queueCount(\(queueCount)) + completedCount(\(completedCount)) = \(total), task.totalExposures=\(task.totalExposures)")
+        } else {
+            print("[ViewModel] totalCount: queueCount(\(queueCount)) + completedCount(\(completedCount)) = \(total)")
+        }
+        #endif
+        
+        return total
     }
     
     var progress: Double {
@@ -123,7 +142,59 @@ class StudyViewModel: ObservableObject {
         #endif
         
         do {
-            let (cards, records) = try wordRepository.fetchStudyCards(limit: 40)
+            // ⭐ 修复：根据任务中的单词ID列表来加载卡片，而不是使用固定的 limit
+            let (cards, records): ([StudyCard], [Int: WordLearningRecord])
+            
+            if let task = currentTask, !task.newWords.isEmpty || !task.reviewWords.isEmpty {
+                // 使用任务中的单词ID列表
+                #if DEBUG
+                print("[ViewModel] Loading cards from task: \(task.newWords.count) new + \(task.reviewWords.count) review")
+                #endif
+                
+                // 根据曝光策略计算曝光次数
+                // ⭐ 修复：使用任务的 totalExposures 来估算每个单词的曝光次数
+                // 如果任务有 totalExposures，使用它来计算；否则使用策略默认值
+                let newWordExposures: Int
+                let reviewWordExposures: Int
+                
+                if task.totalExposures > 0 {
+                    // 根据任务的总曝光次数来估算
+                    // 假设：新词占大部分曝光，复习词占小部分
+                    let estimatedNewExposures = task.newWordsCount > 0 ? 
+                        (task.totalExposures * 8 / 10) / max(task.newWordsCount, 1) : 10
+                    let estimatedReviewExposures = task.reviewWordsCount > 0 ?
+                        (task.totalExposures * 2 / 10) / max(task.reviewWordsCount, 1) : 5
+                    
+                    newWordExposures = max(estimatedNewExposures, 5)  // 最少5次
+                    reviewWordExposures = max(estimatedReviewExposures, 3)  // 最少3次
+                } else {
+                    // 使用策略默认值
+                    let defaultRecord = WordLearningRecord.initial(wid: 0, targetExposures: 10)
+                    newWordExposures = exposureStrategy.calculateExposures(for: defaultRecord)
+                    reviewWordExposures = max(newWordExposures / 2, 5)  // 复习词通常是新词的一半，最少5次
+                }
+                
+                #if DEBUG
+                print("[ViewModel] Exposure settings: new=\(newWordExposures), review=\(reviewWordExposures)")
+                #endif
+                
+                (cards, records) = try wordRepository.fetchStudyCardsForTask(
+                    newWordIds: task.newWords,
+                    reviewWordIds: task.reviewWords,
+                    newWordExposures: newWordExposures,
+                    reviewWordExposures: reviewWordExposures
+                )
+                
+                #if DEBUG
+                print("[ViewModel] Task-based loading: \(cards.count) cards from \(task.newWords.count + task.reviewWords.count) words")
+                #endif
+            } else {
+                // 如果没有任务，使用默认方式（向后兼容）
+                #if DEBUG
+                print("[ViewModel] No task found, using default loading (limit: 40)")
+                #endif
+                (cards, records) = try wordRepository.fetchStudyCards(limit: 40)
+            }
             
             #if DEBUG
             print("[ViewModel] Repository returned: \(cards.count) cards, \(records.count) records")
@@ -162,8 +233,9 @@ class StudyViewModel: ObservableObject {
                 
                 learningRecords[word.id] = record
                 
+                // ⭐ P0 修复：移除 record 参数
                 for _ in 0..<targetExposures {
-                    fallbackCards.append(StudyCard(word: word, record: record))
+                    fallbackCards.append(StudyCard(word: word))
                 }
             }
             
@@ -193,27 +265,47 @@ class StudyViewModel: ObservableObject {
     }
     
     /// 优化队列（避免相同单词连续出现）
+    /// ⭐ P2 修复：改进队列优化逻辑，确保所有卡片都被正确处理，不会丢失或过度延迟
     private func optimizeQueue(_ queue: [StudyCard]) -> [StudyCard] {
         var optimized: [StudyCard] = []
         var lastWordId: Int? = nil
         var buffer: [StudyCard] = []
+        let maxBufferSize = 3  // 缓冲区最大大小
         
         for card in queue {
             if card.word.id == lastWordId {
                 buffer.append(card)
-            } else {
-                optimized.append(card)
-                lastWordId = card.word.id
                 
-                // 插入缓冲区
-                if !buffer.isEmpty && buffer.count < 3 {
+                // ⭐ P2 修复：当缓冲区达到最大大小时，分批插入，避免过度积累
+                if buffer.count >= maxBufferSize {
+                    // 插入前 maxBufferSize-1 张卡片，保留最后一张
+                    optimized.append(contentsOf: buffer.prefix(maxBufferSize - 1))
+                    buffer = Array(buffer.suffix(1))  // 保留最后一张
+                }
+            } else {
+                // 遇到新单词，先处理缓冲区
+                if !buffer.isEmpty {
                     optimized.append(contentsOf: buffer)
                     buffer = []
                 }
+                
+                optimized.append(card)
+                lastWordId = card.word.id
             }
         }
         
-        optimized.append(contentsOf: buffer)
+        // ⭐ P2 修复：确保所有剩余的缓冲区卡片都被添加
+        if !buffer.isEmpty {
+            optimized.append(contentsOf: buffer)
+        }
+        
+        #if DEBUG
+        // 验证：确保没有丢失卡片
+        if optimized.count != queue.count {
+            print("[ViewModel] ⚠️ 警告：队列优化后卡片数量不匹配！原始: \(queue.count), 优化后: \(optimized.count)")
+        }
+        #endif
+        
         return optimized
     }
     
@@ -228,6 +320,9 @@ class StudyViewModel: ObservableObject {
         print("[ViewModel] handleSwipe: wid=\(wordId), direction=\(direction.rawValue), dwell=\(String(format: "%.2f", dwellTime))s")
         print("[ViewModel] Before swipe: queue=\(queue.count), visible=\(visibleCards.count), completed=\(completedCount)")
         #endif
+        
+        // ⭐ P0 修复：在开始时保存当前卡片的 UUID，用于后续判断
+        let currentCardId = visibleCards.first?.id
         
         // 1. 更新学习记录
         if var record = learningRecords[wordId] {
@@ -256,8 +351,41 @@ class StudyViewModel: ObservableObject {
             }
         }
         
-        // 2. 更新统计
-        completedCount += 1
+        // 2. 检查是否提前掌握（使用曝光策略）⭐ 新增（提前到步骤2，以便在步骤3中使用结果）
+        let updatedRecord = learningRecords[wordId]!
+        var earlyMasteredRemovedCount = 0  // ⭐ P1 修复：记录提前掌握移除的卡片数
+        
+        if !exposureStrategy.shouldContinueExposure(for: updatedRecord) {
+            // 提前掌握，从队列移除该单词的所有剩余卡片
+            // ⚠️ 注意：这里移除的是除了当前卡片之外的其他卡片
+            // 当前卡片会在步骤5中正常移除
+            let remainingCards = queue.filter { $0.word.id == wordId }
+            earlyMasteredRemovedCount = remainingCards.count - 1  // 减去当前卡片（会在步骤5移除）
+            
+            // ⭐ P0 修复：使用保存的 currentCardId 而不是 queue.first?.id
+            var removed = 0
+            queue.removeAll { card in
+                if card.word.id == wordId && card.id != currentCardId {
+                    removed += 1
+                    return true
+                }
+                return false
+            }
+            
+            #if DEBUG
+            print("[Strategy] Word \(wordId) mastered early, removed \(removed) additional cards from queue")
+            print("[Strategy] Reason: right=\(updatedRecord.swipeRightCount), dwell=\(String(format: "%.1f", updatedRecord.avgDwellTime))s")
+            #endif
+        }
+        
+        // 3. 更新统计
+        // ⭐ P1 修复：计算实际完成的卡片数（当前卡片 + 提前掌握移除的卡片）
+        let totalCardsCompleted = 1 + max(0, earlyMasteredRemovedCount)
+        completedCount += totalCardsCompleted
+        
+        #if DEBUG
+        print("[ViewModel] ⭐ 进度更新: completedCount=\(completedCount), queueCount=\(queueCount), totalCount=\(totalCount)")
+        #endif
         
         switch direction {
         case .right:
@@ -266,51 +394,39 @@ class StudyViewModel: ObservableObject {
             leftSwipeCount += 1
         }
         
-        // 3. 更新当前任务进度
+        #if DEBUG
+        if earlyMasteredRemovedCount > 0 {
+            print("[ViewModel] ⭐ 提前掌握：当前卡片(1) + 提前移除(\(earlyMasteredRemovedCount)) = 总计完成(\(totalCardsCompleted))")
+        }
+        #endif
+        
+        // 4. 更新当前任务进度
         if var task = currentTask {
             task.completedExposures = completedCount
             currentTask = task
         }
         
-        // 4. 检查是否提前掌握（使用曝光策略）⭐ 新增
-        let updatedRecord = learningRecords[wordId]!
-        if !exposureStrategy.shouldContinueExposure(for: updatedRecord) {
-            // 提前掌握，从队列移除该单词的所有剩余卡片
-            let removedCount = queue.removeAll { $0.word.id == wordId }
-            #if DEBUG
-            print("[Strategy] Word \(wordId) mastered early, removed \(removedCount) cards from queue")
-            print("[Strategy] Reason: right=\(updatedRecord.swipeRightCount), dwell=\(String(format: "%.1f", updatedRecord.avgDwellTime))s")
-            #endif
-        }
-        
-        // 5. 从队列移除卡片（关键修复：先移除 queue，再更新 visibleCards）⭐
+        // 5. 从队列移除当前卡片（关键修复：先移除 queue，再更新 visibleCards）⭐
         if !queue.isEmpty {
             queue.removeFirst()
             
             #if DEBUG
             print("[ViewModel] Removed from queue, queue now: \(queue.count)")
             #endif
-            
-            // 6. 重新计算可见卡片（始终是 queue 的前 3 张，避免重复）⭐
-            visibleCards = Array(queue.prefix(3))
-            
-            #if DEBUG
-            print("[ViewModel] Updated visibleCards from queue, visible now: \(visibleCards.count)")
-            if let first = visibleCards.first {
-                print("[ViewModel] New top card: \(first.word.word) (wid: \(first.word.id))")
-            }
-            #endif
-            
-            // 7. 延迟启动下一张卡片的计时（给UI动画时间）
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-                if let nextCard = self.visibleCards.first {
-                    #if DEBUG
-                    print("[ViewModel] Starting tracking for next card: wid=\(nextCard.word.id)")
-                    #endif
-                    self.dwellTimeTracker.startTracking(wordId: nextCard.word.id)
-                }
-            }
         }
+        
+        // 6. 重新计算可见卡片（始终是 queue 的前 3 张，避免重复）⭐
+        visibleCards = Array(queue.prefix(3))
+        
+        #if DEBUG
+        print("[ViewModel] Updated visibleCards from queue, visible now: \(visibleCards.count)")
+        if let first = visibleCards.first {
+            print("[ViewModel] New top card: \(first.word.word) (wid: \(first.word.id))")
+        }
+        #endif
+        
+        // 7. 下一张卡片的计时由 KolodaCardsCoordinator 负责（在 didSwipeCardAt 中）
+        // 这里不再重复启动计时，避免冲突
         
         // 8. 检查是否完成
         if queue.isEmpty && visibleCards.isEmpty {
@@ -332,6 +448,25 @@ class StudyViewModel: ObservableObject {
         if let currentCard = visibleCards.first {
             dwellTimeTracker.startTracking(wordId: currentCard.word.id)
         }
+    }
+    
+    // MARK: - 获取学习记录（用于UI显示）
+    /// 获取指定单词的学习记录
+    func getLearningRecord(for wordId: Int) -> WordLearningRecord? {
+        return learningRecords[wordId]
+    }
+    
+    // MARK: - 获取队列信息（用于 Koloda 数据源）
+    /// ⭐ 修复：根据索引获取队列中的卡片（Koloda 需要根据索引获取卡片）
+    func getCard(at index: Int) -> StudyCard? {
+        guard index >= 0 && index < queue.count else { return nil }
+        return queue[index]
+    }
+    
+    /// ⭐ 修复：获取队列中的卡片数量（Koloda 需要知道总卡片数）
+    /// 注意：使用 @Published 的 queueCount 属性，而不是计算属性
+    var currentQueueCount: Int {
+        return queueCount  // 使用 @Published 属性
     }
     
     // MARK: - 完成学习（保存到数据库）⭐

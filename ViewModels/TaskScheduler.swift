@@ -164,8 +164,9 @@ class TaskScheduler {
             guard let word = words.first(where: { $0.id == wid }) else { continue }
             let record = WordLearningRecord.initial(wid: wid, targetExposures: 10)
             
+            // ⭐ P0 修复：移除 record 参数
             for _ in 0..<10 {
-                queue.append(StudyCard(word: word, record: record))
+                queue.append(StudyCard(word: word))
             }
         }
         
@@ -174,8 +175,9 @@ class TaskScheduler {
             guard let word = words.first(where: { $0.id == wid }) else { continue }
             let record = WordLearningRecord.initial(wid: wid, targetExposures: 5)
             
+            // ⭐ P0 修复：移除 record 参数
             for _ in 0..<5 {
-                queue.append(StudyCard(word: word, record: record))
+                queue.append(StudyCard(word: word))
             }
         }
         

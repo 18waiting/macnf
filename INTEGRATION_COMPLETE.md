@@ -12,7 +12,7 @@
 
 2. ✅ **DailyTaskStorage** - 每日任务存储
    - `fetchAll()` - 获取所有任务
-   - `fetchToday()` - 获取今日任务
+   - `fetchToday()` - 获取今日任务ß
    - `insert()` - 插入新任务
    - `update()` - 更新任务
 
@@ -50,37 +50,6 @@
 
 ### UI 层数据绑定 ✅
 所有 UI 已更新为从数据库读取：
-
-1. ✅ **LearningHomeView**
-   ```swift
-   private var currentGoal: LearningGoal? {
-       appState.dashboard.goal ?? appState.localDatabase.goals.first(where: { $0.status == .inProgress })
-   }
-   private var todayTask: DailyTask? {
-       // 优先从 dashboard，其次从 localDatabase.tasks 查找
-   }
-   ```
-
-2. ✅ **StatisticsView**
-   ```swift
-   private var currentGoal: LearningGoal? {
-       appState.dashboard.goal ?? appState.localDatabase.goals.first(where: { $0.status == .inProgress })
-   }
-   private var todayTask: DailyTask? { ... }
-   private var latestReport: DailyReport? {
-       appState.dashboard.yesterdayReport ?? appState.localDatabase.reports.last
-   }
-   ```
-
-3. ✅ **BookLibraryView**
-   ```swift
-   let availablePacks = appState.localDatabase.packs.filter { pack in
-       // 从数据库读取词书列表，排除当前正在学习的
-   }
-   ForEach(availablePacks) { pack in
-       PackCard(name: pack.title, wordCount: pack.totalCount, ...)
-   }
-   ```
 
 ---
 
@@ -204,51 +173,4 @@ LocalDatabaseCoordinator.bootstrap()
 
 ---
 
-## 📝 后续开发建议
-
-### 下一步：学习流程数据持久化
-当用户完成学习后，需要：
-1. 更新 `word_exposure` 表（记录 swipe 和 dwell 数据）
-2. 更新 `daily_tasks_local` 的进度
-3. 生成 `daily_reports_local`
-4. 更新 `learning_goals_local` 的进度
-
-示例代码：
-```swift
-// 在 StudyViewModel.completeStudy() 中
-func saveToDatabase(report: DailyReport) async {
-    do {
-        // 1. 保存报告
-        let reportStorage = DailyReportStorage()
-        _ = try reportStorage.insert(report)
-        
-        // 2. 更新任务
-        let taskStorage = DailyTaskStorage()
-        if var task = currentTask {
-            task.completedExposures = completedCount
-            task.status = .completed
-            task.endTime = Date()
-            try taskStorage.update(task)
-        }
-        
-        // 3. 更新学习目标
-        let goalStorage = LearningGoalStorage()
-        if var goal = currentGoal {
-            goal.currentDay += 1
-            goal.completedWords += report.totalWordsStudied
-            goal.completedExposures += report.totalExposures
-            try goalStorage.update(goal)
-        }
-        
-        print("✅ 学习数据已保存到数据库")
-    } catch {
-        print("❌ 保存失败: \(error)")
-    }
-}
-```
-
----
-
-**创建时间**：2025-11-05  
-**状态**：✅ 数据库集成100%完成
 
