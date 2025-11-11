@@ -33,12 +33,25 @@ struct Translation: Codable, Hashable {
     let meaning: String
     
     var displayPartOfSpeech: String {
-        switch partOfSpeech {
+        let trimmed = partOfSpeech.trimmingCharacters(in: .whitespacesAndNewlines)
+        if trimmed.isEmpty {
+            return "短语"
+        }
+        switch trimmed {
         case "n": return "名词"
         case "v": return "动词"
         case "adj": return "形容词"
         case "adv": return "副词"
-        default: return partOfSpeech
+        case "prep": return "介词"
+        case "pron": return "代词"
+        case "num": return "数词"
+        case "conj": return "连词"
+        case "interj": return "感叹词"
+        case "aux": return "助动词"
+        case "phr": return "短语"
+        case "phrase": return "短语"
+        default:
+            return trimmed.uppercased()
         }
     }
 }

@@ -28,6 +28,7 @@ class StudyViewModel: ObservableObject {
     @Published var currentTask: DailyTask?
     @Published var currentReport: DailyReport?
     @Published var queueCount: Int = 0  // ⭐ 新增：用于触发 totalCount 的 UI 更新
+    @Published var initialTotalCount: Int = 0  // ⭐ 新增：保存初始卡片总数（固定值）
     
     // MARK: - Private Properties
     private var queue: [StudyCard] = [] {
@@ -58,21 +59,20 @@ class StudyViewModel: ObservableObject {
     private var exposureStrategy: ExposureStrategy = ExposureStrategyFactory.defaultStrategy()
     
     // MARK: - Computed Properties
-    // ⭐ 修复：使用 @Published 属性确保 UI 更新
+    // ⭐ 修复：使用固定的初始总数，而不是动态计算
     var totalCount: Int {
-        // ⭐ 修复：始终使用 queueCount + completedCount 来计算总数
-        // 这样进度会随着队列变化而更新
-        let total = queueCount + completedCount
-        
-        #if DEBUG
-        if let task = currentTask, task.totalExposures > 0 {
-            print("[ViewModel] totalCount: queueCount(\(queueCount)) + completedCount(\(completedCount)) = \(total), task.totalExposures=\(task.totalExposures)")
-        } else {
-            print("[ViewModel] totalCount: queueCount(\(queueCount)) + completedCount(\(completedCount)) = \(total)")
+        // ⭐ 修复：使用初始总数（固定值），这样分母不会减少
+        // 如果初始总数未设置，则使用 queueCount + completedCount 作为后备
+        if initialTotalCount > 0 {
+            return initialTotalCount
         }
-        #endif
         
-        return total
+        // 后备方案：使用任务的 totalExposures 或当前队列 + 已完成数
+        if let task = currentTask, task.totalExposures > 0 {
+            return task.totalExposures
+        }
+        
+        return queueCount + completedCount
     }
     
     var progress: Double {
@@ -210,8 +210,11 @@ class StudyViewModel: ObservableObject {
             learningRecords = records
             queue = optimizeQueue(cards)
             
+            // ⭐ 修复：保存初始卡片总数（固定值）
+            initialTotalCount = queue.count
+            
             #if DEBUG
-            print("[ViewModel] Card queue prepared: \(queue.count) cards")
+            print("[ViewModel] Card queue prepared: \(queue.count) cards, initialTotalCount=\(initialTotalCount)")
             #endif
             
         } catch {
@@ -241,8 +244,11 @@ class StudyViewModel: ObservableObject {
             
             queue = optimizeQueue(fallbackCards)
             
+            // ⭐ 修复：保存初始卡片总数（固定值）
+            initialTotalCount = queue.count
+            
             #if DEBUG
-            print("[ViewModel] Fallback queue: \(queue.count) cards from \(Word.examples.count) example words")
+            print("[ViewModel] Fallback queue: \(queue.count) cards from \(Word.examples.count) example words, initialTotalCount=\(initialTotalCount)")
             #endif
         }
         
@@ -590,6 +596,7 @@ class StudyViewModel: ObservableObject {
         rightSwipeCount = 0
         leftSwipeCount = 0
         studyTime = 0
+        initialTotalCount = 0  // ⭐ 重置初始总数
         isCompleted = false
         currentReport = nil
         hasInitialized = false

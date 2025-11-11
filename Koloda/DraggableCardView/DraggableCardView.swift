@@ -394,37 +394,24 @@ public class DraggableCardView: UIView, UIGestureRecognizerDelegate {
         
         removeAnimations()
         
-        let resetPositionAnimation = POPSpringAnimation(propertyNamed: kPOPLayerTranslationXY)
-        resetPositionAnimation?.fromValue = NSValue(cgPoint:POPLayerGetTranslationXY(layer))
-        resetPositionAnimation?.toValue = NSValue(cgPoint: CGPoint.zero)
-        resetPositionAnimation?.springBounciness = cardResetAnimationSpringBounciness
-        resetPositionAnimation?.springSpeed = cardResetAnimationSpringSpeed
-        resetPositionAnimation?.completionBlock = { (_ animation: UIKitBasicAnimation?, _ finished: Bool) in
+        // ⭐ 修复：使用 UIView 动画重置，确保卡片回到正确位置
+        // 使用 Spring 动画让重置更自然
+        UIView.animate(
+            withDuration: cardResetAnimationDuration,
+            delay: 0,
+            usingSpringWithDamping: 0.7,
+            initialSpringVelocity: 0.5,
+            options: [.curveEaseOut, .allowUserInteraction]
+        ) {
+            // ⭐ 关键修复：重置所有变换到初始状态
+            self.layer.transform = CATransform3DIdentity
+            self.overlayView?.alpha = 0.0
+        } completion: { _ in
+            // ⭐ 确保最终状态完全正确
             self.layer.transform = CATransform3DIdentity
             self.dragBegin = false
+            self.overlayView?.alpha = 0.0
         }
-        
-        layer.pop_add(resetPositionAnimation, forKey: "resetPositionAnimation")
-        
-        let resetRotationAnimation = POPBasicAnimation(propertyNamed: kPOPLayerRotation)
-        resetRotationAnimation?.fromValue = POPLayerGetRotationZ(layer)
-        resetRotationAnimation?.toValue = CGFloat(0.0)
-        resetRotationAnimation?.duration = cardResetAnimationDuration
-        
-        layer.pop_add(resetRotationAnimation, forKey: "resetRotationAnimation")
-        
-        let overlayAlphaAnimation = POPBasicAnimation(propertyNamed: kPOPViewAlpha)
-        overlayAlphaAnimation?.toValue = 0.0
-        overlayAlphaAnimation?.duration = cardResetAnimationDuration
-        overlayAlphaAnimation?.completionBlock = { (_ animation: UIKitBasicAnimation?, _ finished: Bool) in
-            self.overlayView?.alpha = 0
-        }
-        overlayView?.pop_add(overlayAlphaAnimation, forKey: "resetOverlayAnimation")
-        
-        let resetScaleAnimation = POPBasicAnimation(propertyNamed: kPOPLayerScaleXY)
-        resetScaleAnimation?.toValue = NSValue(cgPoint: CGPoint(x: 1.0, y: 1.0))
-        resetScaleAnimation?.duration = cardResetAnimationDuration
-        layer.pop_add(resetScaleAnimation, forKey: "resetScaleAnimation")
     }
     
     //MARK: Public

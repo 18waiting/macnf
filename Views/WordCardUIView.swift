@@ -49,6 +49,7 @@ class WordCardUIView: UIView {
     func configure(with card: StudyCard, exposureInfo: (current: Int, total: Int)? = nil) {
         self.card = card
         self.exposureInfo = exposureInfo
+        isExpanded = false
         updateContent()
     }
     
@@ -250,9 +251,16 @@ class WordCardUIView: UIView {
         } else {
             exposureLabel.isHidden = true
         }
-        
-        updateFirstTranslation()
-        updateExpandedContent()
+
+        if isExpanded {
+            clearFirstTranslation()
+            updateExpandedContent()
+        } else {
+            updateFirstTranslation()
+            clearExpandedContent()
+        }
+
+        updateTranslationVisibility()
     }
     
     private func updateFirstTranslation() {
@@ -419,24 +427,38 @@ class WordCardUIView: UIView {
             ])
         }
     }
-    
+
+    private func clearFirstTranslation() {
+        firstTranslationStack.arrangedSubviews.forEach { $0.removeFromSuperview() }
+    }
+
+    private func clearExpandedContent() {
+        expandedContentView.subviews.forEach { $0.removeFromSuperview() }
+    }
+
+    private func updateTranslationVisibility() {
+        expandHintView.isHidden = isExpanded
+        firstTranslationStack.isHidden = isExpanded
+        expandedContentView.isHidden = !isExpanded
+    }
+ 
     // MARK: - Actions
-    
+ 
     @objc private func handleTap() {
         guard let card = card else { return }
-        
+ 
         #if DEBUG
         print("[WordCardUIView] 👆 点击卡片: \(card.word.word), isExpanded: \(isExpanded)")
         #endif
-        
+ 
         isExpanded.toggle()
-        
+
+        updateContent()
+
         UIView.animate(withDuration: 0.3, delay: 0, usingSpringWithDamping: 0.7, initialSpringVelocity: 0) {
-            self.expandHintView.isHidden = self.isExpanded
-            self.expandedContentView.isHidden = !self.isExpanded
             self.layoutIfNeeded()
         }
-        
+ 
         #if DEBUG
         print("[WordCardUIView] ✅ 展开状态更新: \(isExpanded)")
         #endif
