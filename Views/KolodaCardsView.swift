@@ -234,6 +234,11 @@ struct KolodaViewWrapper: UIViewRepresentable {
         context.coordinator.viewModel = viewModel
         context.coordinator.onSwipe = onSwipe
         
+        // ⭐ 最优方案：初始化偏移量映射
+        if viewModel.initialTotalCount > 0 {
+            context.coordinator.initialize(with: viewModel.initialTotalCount)
+        }
+        
         // 配置 KolodaView
         kolodaView.dataSource = context.coordinator
         kolodaView.delegate = context.coordinator
@@ -247,7 +252,7 @@ struct KolodaViewWrapper: UIViewRepresentable {
         kolodaView.scaleMin = 0.9  // 从 0.8 提高到 0.9
         
         #if DEBUG
-        print("[KolodaViewWrapper] ✅ makeUIView 完成, cards: \(viewModel.visibleCards.count)")
+        print("[KolodaViewWrapper] ✅ makeUIView 完成, initialTotalCount: \(viewModel.initialTotalCount), queueCount: \(viewModel.queueCount)")
         #endif
         
         // ⭐ 关键：必须在设置数据源后调用 reloadData() 来加载卡片
@@ -259,51 +264,23 @@ struct KolodaViewWrapper: UIViewRepresentable {
     }
     
     func updateUIView(_ uiView: KolodaView, context: Context) {
-        // ⭐ 修复：直接使用 ViewModel 的 visibleCards，不维护副本
-        let previousCards = context.coordinator.viewModel?.visibleCards ?? []
-        let currentCards = viewModel.visibleCards
-        let previousQueueCount = context.coordinator.viewModel?.queueCount ?? 0
-        
-        // 更新 ViewModel 引用
+        // ⭐ 最优方案：更新 ViewModel 引用
         context.coordinator.viewModel = viewModel
         context.coordinator.onSwipe = onSwipe
         
-        // ⭐ 修复：检查队列数量是否改变（不仅仅是 visibleCards）
-        let currentQueueCount = viewModel.queueCount
-        
-        // 检查数据是否真正改变
-        let cardsChanged = previousCards.count != currentCards.count || 
-                          previousCards.map { $0.id } != currentCards.map { $0.id } ||
-                          previousQueueCount != currentQueueCount
-        
-        // ⭐ 关键修复：当队列数量改变时，检查是否需要重置 Koloda 的索引
-        // 注意：滑动后的重置由 didSwipeCardAt 处理，这里只处理其他情况
-        if cardsChanged {
-            DispatchQueue.main.async {
-                let oldIndex = uiView.currentCardIndex
-                
-                // ⭐ 只在索引超出范围时才重置（滑动后的重置由 didSwipeCardAt 处理）
-                if oldIndex >= currentQueueCount {
-                    // ⭐ 索引超出范围，强制重置
-                    uiView.resetCurrentCardIndex()
-                    #if DEBUG
-                    print("[KolodaViewWrapper] 🔄 索引超出范围，强制重置: oldIndex=\(oldIndex) >= queueCount=\(currentQueueCount)")
-                    #endif
-                } else if previousQueueCount == currentQueueCount {
-                    // 如果只是卡片内容变化（队列数量没变），只需重新加载
-                    uiView.reloadData()
-                    #if DEBUG
-                    print("[KolodaViewWrapper] 🔄 reloadData: queueCount=\(currentQueueCount), visible=\(currentCards.count)")
-                    #endif
-                }
-                // 注意：如果队列数量变化，重置由 didSwipeCardAt 处理，这里不做处理
-            }
+        // ⭐ 最优方案：初始化偏移量映射（如果还未初始化）
+        if context.coordinator.initialTotalCount == 0 && viewModel.initialTotalCount > 0 {
+            context.coordinator.initialize(with: viewModel.initialTotalCount)
         }
+        
+        // ⭐ 最优方案：不需要重置索引！
+        // 偏移量会自动调整，Koloda 会通过 viewForCardAt 自动获取正确的卡片
+        // 只有在队列完全为空时才需要特殊处理
         
         #if DEBUG
-        if cardsChanged {
-            print("[KolodaViewWrapper] 🔄 updateUIView, queueCount: \(previousQueueCount)->\(currentQueueCount), visible: \(currentCards.count), changed: \(cardsChanged)")
-        }
+        let currentQueueCount = viewModel.queueCount
+        let currentOffset = viewModel.initialTotalCount - currentQueueCount
+        print("[KolodaViewWrapper] 🔄 updateUIView: queueCount=\(currentQueueCount), initialTotalCount=\(viewModel.initialTotalCount), offset=\(currentOffset)")
         #endif
     }
     
@@ -322,9 +299,22 @@ class KolodaCardsCoordinator: NSObject {
     
     // ⭐ 修复：移除重复的停留时间追踪，统一使用 ViewModel 的 DwellTimeTracker
     
-    // ⭐ P1 修复：视图重用池
+    // ⭐ 最优方案：偏移量映射核心属性
+    var initialTotalCount: Int = 0  // 初始总数（在队列初始化时设置）- internal 访问级别
+    
+    // ⭐ 最优方案：动态计算偏移量
+    private var currentOffset: Int {
+        guard let vm = viewModel else { return 0 }
+        // offset = initialTotalCount - currentQueueCount
+        return initialTotalCount - vm.queueCount
+    }
+    
+    // ⭐ P1 修复：视图重用池（业界最佳实践）
     private var cardViewPool: [WordCardUIView] = []
     private let maxPoolSize = 5  // 最多保留5个视图
+    
+    // ⭐ 最优方案：预加载缓存（减少数据获取延迟）
+    private var preloadedCards: [Int: StudyCard] = [:]
     
     init(viewModel: StudyViewModel, onSwipe: @escaping (Int, SwipeDirection, TimeInterval) -> Void) {
         self.viewModel = viewModel
@@ -336,14 +326,12 @@ class KolodaCardsCoordinator: NSObject {
         #endif
     }
     
-    // ⭐ 重新设计：Koloda 只看到剩余的队列，而不是整个列表
-    // 这样 Koloda 的索引（0 到 queueCount-1）直接对应队列索引，无需映射
-    // 当队列变化时，调用 reloadData() 重置 Koloda 的索引
-    private var totalCardCount: Int {
-        guard let vm = viewModel else { return 0 }
-        // ⭐ 关键修复：返回当前队列数量，而不是初始总数
-        // 这样 Koloda 的索引范围是 0 到 queueCount-1，直接对应队列索引
-        return vm.queueCount
+    // ⭐ 最优方案：初始化方法（在队列初始化时调用）
+    func initialize(with initialCount: Int) {
+        initialTotalCount = initialCount
+        #if DEBUG
+        print("[KolodaCoordinator] ✅ 初始化偏移量映射: initialTotalCount=\(initialTotalCount)")
+        #endif
     }
     
     // ⭐ 辅助属性：获取可见卡片（用于调试）
@@ -357,12 +345,19 @@ class KolodaCardsCoordinator: NSObject {
             #if DEBUG
             print("[KolodaCoordinator] ♻️ 重用卡片视图")
             #endif
+            // ⭐ 优化：确保重用视图立即可见，避免空白
+            reusedView.alpha = 1.0
+            reusedView.isHidden = false
             return reusedView
         } else {
             #if DEBUG
             print("[KolodaCoordinator] ✨ 创建新卡片视图")
             #endif
-            return WordCardUIView()
+            let newView = WordCardUIView()
+            // ⭐ 优化：确保新视图立即可见
+            newView.alpha = 1.0
+            newView.isHidden = false
+            return newView
         }
     }
     
@@ -389,10 +384,11 @@ class KolodaCardsCoordinator: NSObject {
 
 extension KolodaCardsCoordinator: KolodaViewDataSource {
     func kolodaNumberOfCards(_ koloda: KolodaView) -> Int {
-        // ⭐ 修复：返回整个队列的数量，而不是 visibleCards 的数量
-        let count = totalCardCount
+        // ⭐ 最优方案：返回初始总数，而不是当前队列数
+        // 这样 Koloda 的索引范围是 0 到 initialTotalCount-1
+        let count = initialTotalCount > 0 ? initialTotalCount : (viewModel?.queueCount ?? 0)
         #if DEBUG
-        print("[KolodaCoordinator] kolodaNumberOfCards: \(count) (visible: \(visibleCards.count))")
+        print("[KolodaCoordinator] kolodaNumberOfCards: \(count) (initialTotalCount=\(initialTotalCount), queueCount=\(viewModel?.queueCount ?? 0), offset=\(currentOffset))")
         #endif
         return count
     }
@@ -400,13 +396,33 @@ extension KolodaCardsCoordinator: KolodaViewDataSource {
     func koloda(_ koloda: KolodaView, viewForCardAt index: Int) -> UIView {
         guard let viewModel = viewModel else { return UIView() }
         
-        // ⭐ 修复：Koloda 的索引直接对应队列索引（0 到 queueCount-1）
-        guard index >= 0 && index < viewModel.queueCount,
-              let card = viewModel.getCard(at: index) else {
+        // ⭐ 最优方案：索引映射（Koloda 索引 → 队列索引）
+        let queueIndex = index - currentOffset
+        
+        // ⭐ 边界检查
+        guard queueIndex >= 0 && queueIndex < viewModel.queueCount else {
             #if DEBUG
-            print("[KolodaCoordinator] ⚠️ viewForCardAt: 索引越界 index=\(index), queueCount=\(viewModel.queueCount)")
+            print("[KolodaCoordinator] ⚠️ viewForCardAt: 索引越界 kolodaIndex=\(index), offset=\(currentOffset), queueIndex=\(queueIndex), queueCount=\(viewModel.queueCount)")
             #endif
             return UIView()
+        }
+        
+        // ⭐ 最优方案：获取卡片数据（优先使用预加载缓存）
+        let card: StudyCard
+        if let preloaded = preloadedCards[queueIndex] {
+            card = preloaded
+            preloadedCards.removeValue(forKey: queueIndex)
+            #if DEBUG
+            print("[KolodaCoordinator] ⚡ 使用预加载卡片: queueIndex=\(queueIndex), word=\(card.word.word)")
+            #endif
+        } else {
+            guard let fetchedCard = viewModel.getCard(at: queueIndex) else {
+                #if DEBUG
+                print("[KolodaCoordinator] ⚠️ 无法获取卡片: queueIndex=\(queueIndex)")
+                #endif
+                return UIView()
+            }
+            card = fetchedCard
         }
         
         // ⭐ P1 修复：从重用池获取视图，而不是每次都创建新的
@@ -418,22 +434,37 @@ extension KolodaCardsCoordinator: KolodaViewDataSource {
             let current = record.targetExposures - record.remainingExposures
             exposureInfo = (current: current, total: record.targetExposures)
         }
-        cardView.configure(with: card, exposureInfo: exposureInfo)
         
-        // ⭐ 修复：使用 ViewModel 的 DwellTimeTracker 开始计时
-        // 只有当前显示的卡片（索引 0）才需要开始计时
-        if index == 0 {
-            viewModel.dwellTimeTracker.startTracking(wordId: card.word.id)
-            #if DEBUG
-            print("[KolodaCoordinator] ⏱️ 使用 DwellTimeTracker 开始计时: \(card.word.word), index=\(index)")
-            #endif
-        }
+        // ⭐ 关键优化：立即配置视图，确保返回的视图已经准备好数据
+        cardView.alpha = 1.0
+        cardView.isHidden = false
+        cardView.configure(with: card, exposureInfo: exposureInfo)
+        cardView.setNeedsLayout()
+        cardView.layoutIfNeeded()
+        
+        // ⭐ 最优方案：预加载下一张卡片（如果存在）
+        preloadNextCardIfNeeded(queueIndex: queueIndex)
         
         #if DEBUG
-        print("[KolodaCoordinator] 📄 提供卡片视图: index=\(index), word=\(card.word.word)")
+        print("[KolodaCoordinator] 📄 提供卡片视图: kolodaIndex=\(index) → queueIndex=\(queueIndex), word=\(card.word.word)")
         #endif
         
         return cardView
+    }
+    
+    // ⭐ 最优方案：预加载机制（减少滑动延迟）
+    private func preloadNextCardIfNeeded(queueIndex: Int) {
+        guard let viewModel = viewModel,
+              queueIndex + 1 < viewModel.queueCount,
+              let nextCard = viewModel.getCard(at: queueIndex + 1) else {
+            return
+        }
+        
+        // 预加载下一张卡片的数据
+        preloadedCards[queueIndex + 1] = nextCard
+        #if DEBUG
+        print("[KolodaCoordinator] ⚡ 预加载下一张卡片: queueIndex=\(queueIndex + 1), word=\(nextCard.word.word)")
+        #endif
     }
     
     func koloda(_ koloda: KolodaView, viewForCardOverlayAt index: Int) -> OverlayView? {
@@ -447,11 +478,13 @@ extension KolodaCardsCoordinator: KolodaViewDelegate {
     func koloda(_ koloda: KolodaView, didSwipeCardAt index: Int, in direction: SwipeResultDirection) {
         guard let viewModel = viewModel else { return }
         
-        // ⭐ 修复：Koloda 的索引直接对应队列索引（0 到 queueCount-1）
-        guard index >= 0 && index < viewModel.queueCount,
-              let card = viewModel.getCard(at: index) else {
+        // ⭐ 最优方案：索引映射（Koloda 索引 → 队列索引）
+        let queueIndex = index - currentOffset
+        
+        guard queueIndex >= 0 && queueIndex < viewModel.queueCount,
+              let card = viewModel.getCard(at: queueIndex) else {
             #if DEBUG
-            print("[KolodaCoordinator] ⚠️ didSwipeCardAt: 索引越界 index=\(index), queueCount=\(viewModel.queueCount)")
+            print("[KolodaCoordinator] ⚠️ didSwipeCardAt: 索引越界 kolodaIndex=\(index), offset=\(currentOffset), queueIndex=\(queueIndex), queueCount=\(viewModel.queueCount)")
             #endif
             return
         }
@@ -471,42 +504,30 @@ extension KolodaCardsCoordinator: KolodaViewDelegate {
         }
         
         #if DEBUG
-        print("[KolodaCoordinator] 🎯 didSwipeCardAt: word=\(card.word.word), direction=\(swipeDirection.rawValue), dwell=\(String(format: "%.2f", dwellTime))s")
+        print("[KolodaCoordinator] 🎯 didSwipeCardAt: kolodaIndex=\(index) → queueIndex=\(queueIndex), word=\(card.word.word), direction=\(swipeDirection.rawValue), dwell=\(String(format: "%.2f", dwellTime))s")
         #endif
         
         // 📞 触发回调 (通知 ViewModel)
         // ⭐ P1 修复：直接传递 wordId 而不是 cardId，避免查找失败
         onSwipe(card.word.id, swipeDirection, dwellTime)
         
-        // ⭐ 关键修复：滑动完成后，队列会变化，需要重置 Koloda 的索引
-        // 延迟重置，确保滑动动画完成后再重置
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
-            // 检查队列是否还有卡片
-            if let vm = self.viewModel, vm.queueCount > 0 {
-                // 重置 Koloda 的索引，让它重新从队列的第一张开始
-                koloda.resetCurrentCardIndex()
-                #if DEBUG
-                print("[KolodaCoordinator] 🔄 滑动完成，重置索引: queueCount=\(vm.queueCount)")
-                #endif
-            }
+        // ⭐ 最优方案：不需要重置索引！
+        // Koloda 的索引会自动递增，偏移量会自动调整
+        // 下一张卡片会通过 viewForCardAt 自动加载
+        
+        // ⭐ 最优方案：预加载下一张卡片（如果队列还有卡片）
+        if viewModel.queueCount > 1 {
+            preloadNextCardIfNeeded(queueIndex: 0)  // 队列索引 0 是新的第一张
         }
         
-        // ⭐ 修复：使用 ViewModel 的 DwellTimeTracker 开始下一张卡的计时
-        // 下一张卡片的索引是 0（因为队列的第一张已经被移除，新的第一张是索引 0）
-        if viewModel.queueCount > 0,
-           let nextCard = viewModel.getCard(at: 0) {
-            // 延迟开始计时，等待重置完成
-            DispatchQueue.main.asyncAfter(deadline: .now() + 0.4) {
-                viewModel.dwellTimeTracker.startTracking(wordId: nextCard.word.id)
-                #if DEBUG
-                print("[KolodaCoordinator] ⏱️ 使用 DwellTimeTracker 开始计时下一张: \(nextCard.word.word), index=0")
-                #endif
-            }
-        }
+        #if DEBUG
+        print("[KolodaCoordinator] ✅ 滑动处理完成，无需重置索引。新偏移量=\(initialTotalCount - (viewModel.queueCount - 1))")
+        #endif
     }
     
     func koloda(_ koloda: KolodaView, draggedCardWithPercentage finishPercentage: CGFloat, in direction: SwipeResultDirection) {
         // 更新方向指示器 (绿色 ✓ / 橙色 ✗)
+        // ⭐ 最优方案：使用 Koloda 的 currentCardIndex，通过 viewForCard 获取视图
         if let cardView = koloda.viewForCard(at: koloda.currentCardIndex) as? WordCardUIView {
             let offset: CGFloat
             switch direction {
@@ -523,13 +544,15 @@ extension KolodaCardsCoordinator: KolodaViewDelegate {
     
     // ⭐ 修复：拖拽取消时重置指示器
     func kolodaDidResetCard(_ koloda: KolodaView) {
-        // ⭐ 修复：确保重置时使用正确的索引
-        let currentIndex = koloda.currentCardIndex
-        if currentIndex >= 0 && currentIndex < (viewModel?.queueCount ?? 0),
-           let cardView = koloda.viewForCard(at: currentIndex) as? WordCardUIView {
+        // ⭐ 最优方案：使用 Koloda 的 currentCardIndex
+        let currentKolodaIndex = koloda.currentCardIndex
+        let queueIndex = currentKolodaIndex - currentOffset
+        
+        if queueIndex >= 0 && queueIndex < (viewModel?.queueCount ?? 0),
+           let cardView = koloda.viewForCard(at: currentKolodaIndex) as? WordCardUIView {
             cardView.resetDirectionIndicators()
             #if DEBUG
-            print("[KolodaCoordinator] 🔄 卡片重置，清除方向指示器, index=\(currentIndex)")
+            print("[KolodaCoordinator] 🔄 卡片重置，清除方向指示器, kolodaIndex=\(currentKolodaIndex), queueIndex=\(queueIndex)")
             #endif
         }
     }
@@ -541,14 +564,17 @@ extension KolodaCardsCoordinator: KolodaViewDelegate {
     }
     
     // ⭐ 新增：卡片显示时更新曝光次数信息
+    // ⭐ 关键：这是唯一开始计时的地方，确保计时准确且不重复
     func koloda(_ koloda: KolodaView, didShowCardAt index: Int) {
         guard let viewModel = viewModel else { return }
         
-        // ⭐ 修复：Koloda 的索引直接对应队列索引（0 到 queueCount-1）
-        guard index >= 0 && index < viewModel.queueCount,
-              let card = viewModel.getCard(at: index) else {
+        // ⭐ 最优方案：索引映射（Koloda 索引 → 队列索引）
+        let queueIndex = index - currentOffset
+        
+        guard queueIndex >= 0 && queueIndex < viewModel.queueCount,
+              let card = viewModel.getCard(at: queueIndex) else {
             #if DEBUG
-            print("[KolodaCoordinator] ⚠️ didShowCardAt: 索引越界 index=\(index), queueCount=\(viewModel.queueCount)")
+            print("[KolodaCoordinator] ⚠️ didShowCardAt: 索引越界 kolodaIndex=\(index), offset=\(currentOffset), queueIndex=\(queueIndex), queueCount=\(viewModel.queueCount)")
             #endif
             return
         }
@@ -561,7 +587,20 @@ extension KolodaCardsCoordinator: KolodaViewDelegate {
                 let current = record.targetExposures - record.remainingExposures
                 exposureInfo = (current: current, total: record.targetExposures)
             }
+            
+            // ⭐ 关键优化：立即更新视图，确保数据同步
             cardView.configure(with: card, exposureInfo: exposureInfo)
+            
+            // ⭐ 关键修复：统一在这里开始计时，确保：
+            // 1. 只在卡片真正显示时才开始计时
+            // 2. 避免重复计时（viewForCardAt 和 didSwipeCardAt 都不再计时）
+            // 3. 只有当前显示的卡片（队列索引 0）需要计时
+            if queueIndex == 0 {
+                viewModel.dwellTimeTracker.startTracking(wordId: card.word.id)
+                #if DEBUG
+                print("[KolodaCoordinator] ⏱️ didShowCardAt 开始计时: \(card.word.word), kolodaIndex=\(index) → queueIndex=\(queueIndex)")
+                #endif
+            }
             
             #if DEBUG
             if let exposureInfo = exposureInfo {
@@ -570,31 +609,31 @@ extension KolodaCardsCoordinator: KolodaViewDelegate {
             #endif
         } else {
             #if DEBUG
-            print("[KolodaCoordinator] ⚠️ didShowCardAt: 卡片视图不存在 index=\(index)")
+            print("[KolodaCoordinator] ⚠️ didShowCardAt: 卡片视图不存在 kolodaIndex=\(index)")
             #endif
         }
     }
     
     func kolodaDidRunOutOfCards(_ koloda: KolodaView) {
         #if DEBUG
-        let currentQueueCount = totalCardCount
+        let currentQueueCount = viewModel?.queueCount ?? 0
         let currentVisibleCount = visibleCards.count
+        let currentKolodaIndex = koloda.currentCardIndex
+        let currentOffset = self.currentOffset
+        
         print("[KolodaCoordinator] 📭 卡片用完了")
         print("[KolodaCoordinator]   当前队列数量: \(currentQueueCount)")
         print("[KolodaCoordinator]   当前可见卡片: \(currentVisibleCount)")
-        print("[KolodaCoordinator]   Koloda currentCardIndex: \(koloda.currentCardIndex)")
+        print("[KolodaCoordinator]   Koloda currentCardIndex: \(currentKolodaIndex)")
+        print("[KolodaCoordinator]   当前偏移量: \(currentOffset)")
         
-        // ⭐ 修复：如果队列中还有卡片，说明是同步问题，需要强制重置
+        // ⭐ 最优方案：如果队列中还有卡片，可能是索引映射问题
+        // 但不需要重置，因为偏移量会自动调整
         if currentQueueCount > 0 {
+            let expectedKolodaIndex = currentQueueCount + currentOffset - 1
             print("[KolodaCoordinator] ⚠️ 警告：队列中还有 \(currentQueueCount) 张卡片，但 Koloda 认为用完了")
-            print("[KolodaCoordinator]   这可能是索引同步问题，尝试强制重置...")
-            DispatchQueue.main.async {
-                // ⭐ 使用 resetCurrentCardIndex() 强制重置索引
-                koloda.resetCurrentCardIndex()
-                #if DEBUG
-                print("[KolodaCoordinator] ✅ 已调用 resetCurrentCardIndex()，索引应已重置为 0")
-                #endif
-            }
+            print("[KolodaCoordinator]   预期 Koloda 索引: \(expectedKolodaIndex), 实际: \(currentKolodaIndex)")
+            print("[KolodaCoordinator]   这可能是索引映射问题，但偏移量会自动调整，无需重置")
         }
         #endif
     }
