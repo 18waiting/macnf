@@ -12,53 +12,21 @@ import Foundation
 // MARK: - 计划选择视图
 struct PlanSelectionView: View {
     let pack: LocalPackRecord
+    var onGoalCreated: (() -> Void)? = nil
     @State private var selectedPlan: LearningPlan = .standard
     @State private var showConfirmation = false
     @State private var isCreating = false
     @Environment(\.dismiss) var dismiss
     @EnvironmentObject var appState: AppState
     
-    // 计算属性
+    
+    // MARK: - 计划计算（使用 GoalService）
+    
+    /// 计算计划参数（委托给 GoalService）
     private var calculation: PlanCalculation {
-        return calculatePlan(totalWords: pack.totalCount, plan: selectedPlan)
-    }
-    
-    // MARK: - 计划计算（独立实现，避免依赖 GoalService）
-    
-    /// 计算计划参数
-    private func calculatePlan(totalWords: Int, plan: LearningPlan) -> PlanCalculation {
-        let durationDays = plan.durationDays
-        
-        // 计算每日新词数
-        let dailyNewWords = totalWords / durationDays
-        
-        // 计算每日复习词数（基于遗忘曲线）
-        // 平均每天约 20-50 个复习词
-        let averageReviewRatio = 0.3
-        let averageDaysToReview = 3.0
-        let estimatedReviewWords = Int(Double(dailyNewWords) * averageDaysToReview * averageReviewRatio)
-        let dailyReviewWords = min(max(estimatedReviewWords, 20), 50)
-        
-        // 计算每日曝光次数
-        // 新词：10次曝光/词
-        // 复习词：5次曝光/词
-        let dailyNewExposures = dailyNewWords * 10
-        let dailyReviewExposures = dailyReviewWords * 5
-        let totalDailyExposures = dailyNewExposures + dailyReviewExposures
-        
-        // 计算预计时间（假设每次曝光3秒）
-        let estimatedMinutes = Int(Double(totalDailyExposures) * 3.0 / 60.0)
-        
-        let startDate = Date()
-        let endDate = Calendar.current.date(byAdding: .day, value: durationDays, to: startDate) ?? startDate
-        
-        return PlanCalculation(
-            dailyNewWords: dailyNewWords,
-            dailyReviewWords: dailyReviewWords,
-            dailyExposures: totalDailyExposures,
-            estimatedMinutes: estimatedMinutes,
-            startDate: startDate,
-            endDate: endDate
+        GoalService.shared.calculatePlan(
+            totalWords: pack.totalCount,
+            plan: selectedPlan
         )
     }
     
@@ -106,6 +74,11 @@ struct PlanSelectionView: View {
                 }
             } message: {
                 Text("将创建 \(selectedPlan.durationDays) 天学习计划，每天约 \(calculation.estimatedMinutes) 分钟")
+            }
+            .alert("错误", isPresented: $showErrorAlert) {
+                Button("确定", role: .cancel) { }
+            } message: {
+                Text(errorMessage ?? "未知错误")
             }
             .disabled(isCreating)
             .overlay {
@@ -256,23 +229,36 @@ struct PlanSelectionView: View {
     
     // MARK: - 操作
     
-    /// 创建学习目标
+    /// 创建学习目标（使用 GoalService）
     private func createGoal() {
         isCreating = true
         
         Task {
             do {
-                // 1. 创建目标和任务（直接实现，避免依赖 GoalService）
-                let (goal, task) = try await createGoalAndTask()
+                // 1. 使用 GoalService 创建目标和任务
+                let (goal, task) = try GoalService.shared.createGoal(
+                    packId: pack.packId,
+                    packName: pack.title,
+                    totalWords: pack.totalCount,
+                    plan: selectedPlan
+                )
                 
                 // 2. 更新应用状态
                 await MainActor.run {
                     appState.updateGoal(goal, task: task, report: nil)
+                    
+                    // 3. 通知 StudyViewModel 重新加载数据
+                    appState.studyViewModel.reloadFromDatabase()
+                    
                     isCreating = false
                     dismiss()
                     
+                    // 4. 通知父视图目标已创建（用于导航）
+                    onGoalCreated?()
+                    
                     #if DEBUG
                     print("[PlanSelectionView] ✅ 目标创建成功: \(goal.packName)")
+                    print("[PlanSelectionView] ✅ StudyViewModel 已刷新")
                     #endif
                 }
             } catch {
@@ -282,180 +268,19 @@ struct PlanSelectionView: View {
                     print("[PlanSelectionView] ⚠️ 创建目标失败: \(error)")
                     #endif
                     // TODO: 显示错误提示
+                    showError(error)
                 }
             }
         }
     }
     
-    /// 创建学习目标和任务（独立实现）
-    private func createGoalAndTask() async throws -> (goal: LearningGoal, task: DailyTask) {
-        let calc = calculation
-        let goalId = Int(Date().timeIntervalSince1970)
-        
-        // 1. 创建学习目标
-        let goal = LearningGoal(
-            id: goalId,
-            packId: pack.packId,
-            packName: pack.title,
-            totalWords: pack.totalCount,
-            durationDays: selectedPlan.durationDays,
-            dailyNewWords: calc.dailyNewWords,
-            startDate: calc.startDate,
-            endDate: calc.endDate,
-            status: .inProgress,
-            currentDay: 1,
-            completedWords: 0,
-            completedExposures: 0
-        )
-        
-        // 2. 保存目标到数据库
-        let goalStorage = LearningGoalStorage()
-        _ = try goalStorage.insert(goal)
-        
-        // 3. 获取词库的单词ID列表
-        let packStorage = LocalPackStorage()
-        let packs = try packStorage.fetchAll()
-        let packEntries: [Int]
-        if let foundPack = packs.first(where: { $0.packId == pack.packId }), !foundPack.entries.isEmpty {
-            packEntries = foundPack.entries
-        } else {
-            // 如果没有 entries，使用临时数据
-            packEntries = Array(1...pack.totalCount)
-        }
-        
-        // 4. 获取单词并生成今日任务
-        let wordRepository = WordRepository.shared
-        let allWords = try wordRepository.fetchWordsByIds(packEntries)
-        let shuffledWords = allWords.shuffled()
-        
-        // 计算新词（第1天）
-        let startIndex = 0
-        let endIndex = min(calc.dailyNewWords, shuffledWords.count)
-        let newWords = Array(shuffledWords[startIndex..<endIndex])
-        
-        // 第1天无复习词
-        let reviewWords: [Word] = []
-        
-        // 计算曝光次数
-        let newExposures = newWords.count * 10
-        let reviewExposures = reviewWords.count * 5
-        let totalExposures = newExposures + reviewExposures
-        
-        // 5. 创建今日任务
-        let task = DailyTask(
-            id: goalId * 1000 + 1,
-            goalId: goalId,
-            day: 1,
-            date: calc.startDate,
-            newWords: newWords.map { $0.id },
-            reviewWords: reviewWords.map { $0.id },
-            totalExposures: totalExposures,
-            completedExposures: 0,
-            status: .pending,
-            startTime: nil,
-            endTime: nil
-        )
-        
-        // 6. 保存任务到数据库
-        let taskStorage = DailyTaskStorage()
-        _ = try taskStorage.insert(task)
-        
-        // 7. 异步生成所有任务（不阻塞）
-        Task.detached {
-            do {
-                try await self.generateAllTasks(for: goal, packEntries: packEntries, shuffledWords: shuffledWords)
-                #if DEBUG
-                print("[PlanSelectionView] ✅ 所有任务已生成")
-                #endif
-            } catch {
-                #if DEBUG
-                print("[PlanSelectionView] ⚠️ 生成所有任务失败: \(error)")
-                #endif
-            }
-        }
-        
-        return (goal, task)
-    }
+    /// 显示错误提示
+    @State private var errorMessage: String?
+    @State private var showErrorAlert = false
     
-    /// 生成所有任务（异步）
-    private func generateAllTasks(
-        for goal: LearningGoal,
-        packEntries: [Int],
-        shuffledWords: [Word]
-    ) async throws {
-        let taskStorage = DailyTaskStorage()
-        
-        for day in 1...goal.durationDays {
-            let startIndex = (day - 1) * goal.dailyNewWords
-            let endIndex = min(startIndex + goal.dailyNewWords, shuffledWords.count)
-            let newWords = Array(shuffledWords[startIndex..<endIndex])
-            
-            // 计算复习词（简化版，第1天无复习）
-            let reviewWords: [Word] = day > 1 ? calculateReviewWords(
-                currentDay: day,
-                shuffledWords: shuffledWords,
-                dailyNewWords: goal.dailyNewWords
-            ) : []
-            
-            // 计算曝光次数
-            let newExposures = newWords.count * 10
-            let reviewExposures = reviewWords.count * 5
-            let totalExposures = newExposures + reviewExposures
-            
-            // 创建任务
-            let task = DailyTask(
-                id: goal.id * 1000 + day,
-                goalId: goal.id,
-                day: day,
-                date: Calendar.current.date(byAdding: .day, value: day - 1, to: goal.startDate)!,
-                newWords: newWords.map { $0.id },
-                reviewWords: reviewWords.map { $0.id },
-                totalExposures: totalExposures,
-                completedExposures: 0,
-                status: .pending,
-                startTime: nil,
-                endTime: nil
-            )
-            
-            // 保存任务（第1天的任务已经保存，跳过）
-            if day > 1 {
-                try taskStorage.insert(task)
-            }
-        }
-    }
-    
-    /// 计算复习词（简化版）
-    private func calculateReviewWords(
-        currentDay: Int,
-        shuffledWords: [Word],
-        dailyNewWords: Int
-    ) -> [Word] {
-        guard currentDay > 1 else { return [] }
-        
-        var reviewWords: [Word] = []
-        let previousDays = Array(1..<currentDay)
-        
-        for day in previousDays {
-            let daysAgo = currentDay - day
-            let reviewRatio: Double
-            switch daysAgo {
-            case 1: reviewRatio = 0.2
-            case 2: reviewRatio = 0.3
-            case 3: reviewRatio = 0.4
-            case 4...7: reviewRatio = 0.5
-            default: reviewRatio = 0.3
-            }
-            
-            let startIndex = (day - 1) * dailyNewWords
-            let endIndex = min(startIndex + dailyNewWords, shuffledWords.count)
-            let words = Array(shuffledWords[startIndex..<endIndex])
-            let reviewCount = Int(Double(words.count) * reviewRatio)
-            reviewWords.append(contentsOf: words.prefix(reviewCount))
-        }
-        
-        // 限制每日复习词数量
-        let maxReviewWords = min(reviewWords.count, 50)
-        return Array(reviewWords.shuffled().prefix(maxReviewWords))
+    private func showError(_ error: Error) {
+        errorMessage = error.localizedDescription
+        showErrorAlert = true
     }
 }
 

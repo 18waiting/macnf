@@ -41,7 +41,11 @@ final class WordRepository {
     }
     
     /// ⭐ 修复：根据单词ID列表获取单词
-    func fetchWordsByIds(_ wordIds: [Int]) throws -> [Word] {
+    /// - Parameter wordIds: 单词ID列表
+    /// - Parameter allowPartial: 是否允许部分缺失（默认 false，缺失超过 10% 会抛出错误）
+    /// - Returns: 找到的单词列表
+    /// - Throws: 如果缺失的单词ID过多，会抛出错误
+    func fetchWordsByIds(_ wordIds: [Int], allowPartial: Bool = false) throws -> [Word] {
         try preloadIfNeeded(limit: nil)  // 预加载所有单词
         lock.lock(); defer { lock.unlock() }
         let now = Date()
@@ -62,13 +66,59 @@ final class WordRepository {
             }
         }
         
-        #if DEBUG
+        // 错误处理：如果缺失过多，抛出错误
         if !missingIds.isEmpty {
-            print("[Repository] ⚠️ 警告：\(missingIds.count) 个单词ID未找到: \(missingIds.prefix(10))")
+            let missingRatio = Double(missingIds.count) / Double(wordIds.count)
+            #if DEBUG
+            print("[Repository] ⚠️ 警告：\(missingIds.count)/\(wordIds.count) 个单词ID未找到 (缺失率: \(String(format: "%.1f", missingRatio * 100))%)")
+            if missingIds.count <= 10 {
+                print("[Repository] 缺失的ID: \(missingIds)")
+            } else {
+                print("[Repository] 缺失的ID（前10个）: \(Array(missingIds.prefix(10)))")
+            }
+            #endif
+            
+            // 如果缺失率超过 10% 且不允许部分缺失，抛出错误
+            if !allowPartial && missingRatio > 0.1 {
+                throw NSError(
+                    domain: "WordRepository",
+                    code: 1001,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "数据不完整：\(missingIds.count)/\(wordIds.count) 个单词ID未找到（缺失率 \(String(format: "%.1f", missingRatio * 100))%）",
+                        "missingIds": missingIds,
+                        "requestedCount": wordIds.count,
+                        "foundCount": words.count
+                    ]
+                )
+            }
         }
-        #endif
         
         return words
+    }
+    
+    /// 获取所有可用的单词ID列表
+    /// - Returns: 所有单词ID的数组
+    func getAllWordIds() throws -> [Int] {
+        try preloadIfNeeded(limit: nil)
+        lock.lock(); defer { lock.unlock() }
+        return allWordIds
+    }
+    
+    /// 获取指定范围内的单词ID（用于词库）
+    /// - Parameters:
+    ///   - limit: 限制数量（可选）
+    ///   - offset: 偏移量（默认 0）
+    /// - Returns: 单词ID数组
+    func getWordIds(limit: Int? = nil, offset: Int = 0) throws -> [Int] {
+        try preloadIfNeeded(limit: limit)
+        lock.lock(); defer { lock.unlock() }
+        let startIndex = min(offset, allWordIds.count)
+        if let limit = limit {
+            let endIndex = min(startIndex + limit, allWordIds.count)
+            return Array(allWordIds[startIndex..<endIndex])
+        } else {
+            return Array(allWordIds[startIndex...])
+        }
     }
     
     func fetchStudyCards(limit: Int, exposuresPerWord: Int = 10) throws -> ([StudyCard], [Int: WordLearningRecord]) {

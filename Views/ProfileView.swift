@@ -12,6 +12,7 @@ import SwiftUI
 struct ProfileView: View {
     @EnvironmentObject var appState: AppState
     @StateObject private var themeManager = ThemeManager.shared
+    @StateObject private var statisticsViewModel = StatisticsViewModel()
     @State private var showResetConfirmation = false
     @State private var showResetProgress = false
     @State private var isResetting = false
@@ -19,6 +20,12 @@ struct ProfileView: View {
     @State private var progressSummary: ProgressSummary?
     @State private var showDiagnostic = false
     @State private var showThemeSelector = false
+    @State private var showSettings = false
+    @State private var showAchievements = false
+    @State private var showStatistics = false
+    @State private var showHistory = false
+    @State private var showAnalytics = false
+    @State private var showLearningPath = false
     
     var body: some View {
         NavigationView {
@@ -52,11 +59,14 @@ struct ProfileView: View {
             .toolbar {
                 ToolbarItem(placement: .navigationBarTrailing) {
                     Button(action: {
-                        // 设置
+                        showSettings = true
                     }) {
                         Image(systemName: "gearshape.fill")
                     }
                 }
+            }
+            .sheet(isPresented: $showSettings) {
+                UserPreferencesView()
             }
             .alert("确认重置学习进度？", isPresented: $showResetConfirmation) {
                 Button("取消", role: .cancel) { }
@@ -84,6 +94,8 @@ struct ProfileView: View {
     
     // MARK: - 子视图
     
+    @StateObject private var statisticsViewModel = StatisticsViewModel()
+    
     private var profileCard: some View {
         VStack(spacing: 16) {
             // 头像和昵称
@@ -99,7 +111,7 @@ struct ProfileView: View {
             // 学习天数和连续签到
             HStack(spacing: 30) {
                 VStack(spacing: 4) {
-                    Text("67")
+                    Text("\(statisticsViewModel.studyDays)")
                         .font(.title2.bold())
                         .foregroundColor(.blue)
                     Text("学习天数")
@@ -108,10 +120,10 @@ struct ProfileView: View {
                 }
                 
                 VStack(spacing: 4) {
-                    Text("23")
+                    Text("\(statisticsViewModel.currentStreak)")
                         .font(.title2.bold())
                         .foregroundColor(.orange)
-                    Text("连续签到")
+                    Text("连续学习")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
@@ -122,34 +134,39 @@ struct ProfileView: View {
             // 本周和累计
             HStack(spacing: 40) {
                 VStack(spacing: 4) {
-                    Text("本周学习: 1,280词")
+                    Text("本周学习: \(statisticsViewModel.weeklyWords)词")
                         .font(.callout)
-                    Text("累计: 8,640词")
+                    Text("累计: \(statisticsViewModel.totalWords)词")
                         .font(.caption)
                         .foregroundColor(.secondary)
                 }
             }
             
-            // 等级进度
-            VStack(spacing: 8) {
-                HStack {
-                    Text("等级: Lv.12 进阶学习者")
-                        .font(.callout.bold())
-                    Spacer()
-                    Text("75%")
-                        .font(.caption.bold())
-                        .foregroundColor(.blue)
+            // 等级进度（如果有UserProgress数据）
+            if statisticsViewModel.hasProgress {
+                VStack(spacing: 8) {
+                    HStack {
+                        Text("等级: Lv.\(statisticsViewModel.level)")
+                            .font(.callout.bold())
+                        Spacer()
+                        Text("\(statisticsViewModel.levelProgressPercent)%")
+                            .font(.caption.bold())
+                            .foregroundColor(.blue)
+                    }
+                    
+                    ProgressView(value: statisticsViewModel.levelProgress)
+                        .tint(.blue)
+                        .scaleEffect(y: 2)
                 }
-                
-                ProgressView(value: 0.75)
-                    .tint(.blue)
-                    .scaleEffect(y: 2)
             }
         }
         .padding()
         .background(Color.white)
         .cornerRadius(16)
         .shadow(color: .black.opacity(0.05), radius: 10)
+        .onAppear {
+            statisticsViewModel.load()
+        }
     }
     
     private var studyDataSection: some View {
@@ -162,10 +179,10 @@ struct ProfileView: View {
                 GridItem(.flexible()),
                 GridItem(.flexible())
             ], spacing: 12) {
-                DataCard(icon: "book.fill", title: "词汇量", value: "8,640词")
-                DataCard(icon: "clock.fill", title: "学习时长", value: "126小时")
-                DataCard(icon: "target", title: "完成率", value: "87%")
-                DataCard(icon: "flame.fill", title: "最长连续", value: "45天")
+                DataCard(icon: "book.fill", title: "词汇量", value: "\(statisticsViewModel.totalWords)词")
+                DataCard(icon: "clock.fill", title: "学习时长", value: statisticsViewModel.totalTimeFormatted)
+                DataCard(icon: "target", title: "准确率", value: "\(Int(statisticsViewModel.accuracy * 100))%")
+                DataCard(icon: "flame.fill", title: "最长连续", value: "\(statisticsViewModel.longestStreak)天")
             }
             .padding(.horizontal)
         }
@@ -185,7 +202,7 @@ struct ProfileView: View {
                 Spacer()
                 
                 Button("全部 →") {
-                    // TODO: 查看全部成就
+                    showAchievements = true
                 }
                 .font(.caption)
             }
@@ -203,21 +220,59 @@ struct ProfileView: View {
                 .padding(.horizontal)
             
             VStack(spacing: 0) {
-                MenuRow(icon: "books.vertical.fill", title: "我的词库")
+                MenuRow(icon: "books.vertical.fill", title: "我的词库") {
+                    // 跳转到词库Tab
+                }
                 Divider().padding(.leading, 60)
-                MenuRow(icon: "chart.bar.fill", title: "学习统计")
+                MenuRow(icon: "chart.bar.fill", title: "学习统计") {
+                    showStatistics = true
+                }
                 Divider().padding(.leading, 60)
-                MenuRow(icon: "star.fill", title: "生词本")
+                MenuRow(icon: "trophy.fill", title: "成就系统") {
+                    showAchievements = true
+                }
                 Divider().padding(.leading, 60)
-                MenuRow(icon: "doc.text.fill", title: "学习历史")
+                MenuRow(icon: "doc.text.fill", title: "学习历史") {
+                    showHistory = true
+                }
                 Divider().padding(.leading, 60)
-                MenuRow(icon: "target", title: "学习计划")
+                MenuRow(icon: "chart.line.uptrend.xyaxis", title: "学习分析") {
+                    showAnalytics = true
+                }
                 Divider().padding(.leading, 60)
-                MenuRow(icon: "gearshape.fill", title: "设置")
+                MenuRow(icon: "map.fill", title: "学习路径") {
+                    showLearningPath = true
+                }
+                Divider().padding(.leading, 60)
+                MenuRow(icon: "gearshape.fill", title: "设置") {
+                    showSettings = true
+                }
             }
             .background(Color.white)
             .cornerRadius(12)
             .padding(.horizontal)
+        }
+        .sheet(isPresented: $showSettings) {
+            UserPreferencesView()
+        }
+        .sheet(isPresented: $showAchievements) {
+            AchievementView()
+        }
+        .sheet(isPresented: $showStatistics) {
+            StatisticsDashboardView()
+        }
+        .sheet(isPresented: $showHistory) {
+            StudyHistoryView()
+        }
+        .sheet(isPresented: $showAnalytics) {
+            AnalyticsView()
+        }
+        .sheet(isPresented: $showLearningPath) {
+            if let goal = appState.dashboard.goal {
+                NavigationView {
+                    LearningPathView(packId: goal.packId)
+                }
+            }
         }
     }
     
@@ -351,6 +406,9 @@ struct ProfileView: View {
         }
         .sheet(isPresented: $showDiagnostic) {
             DatabaseDiagnosticView()
+        }
+        .onAppear {
+            statisticsViewModel.load()
         }
     }
     
@@ -558,10 +616,17 @@ struct AchievementBadge: View {
 struct MenuRow: View {
     let icon: String
     let title: String
+    let action: (() -> Void)?
+    
+    init(icon: String, title: String, action: (() -> Void)? = nil) {
+        self.icon = icon
+        self.title = title
+        self.action = action
+    }
     
     var body: some View {
         Button(action: {
-            // TODO: 导航
+            action?()
         }) {
             HStack {
                 Image(systemName: icon)

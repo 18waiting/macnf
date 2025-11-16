@@ -23,6 +23,7 @@ class GoalService {
     // MARK: - 创建目标
     
     /// 创建学习目标并生成所有任务
+    /// - Note: 会自动验证数据完整性，使用实际可用的单词数
     func createGoal(
         packId: Int,
         packName: String,
@@ -33,18 +34,53 @@ class GoalService {
         print("[GoalService] 创建学习目标: pack=\(packName), plan=\(plan.displayName)")
         #endif
         
-        // 1. 计算计划参数
+        // 1. 获取词库的单词ID列表（优先使用数据库中的 entries）
+        let packEntries = try getPackEntries(packId: packId, expectedCount: totalWords)
+        
+        // 2. 获取单词并验证数据完整性
+        let allWords = try wordRepository.fetchWordsByIds(packEntries, allowPartial: true)
+        let shuffledWords = allWords.shuffled()
+        
+        // 3. 数据验证：确保获取到的单词数量足够
+        let actualWordCount = shuffledWords.count
+        let expectedWordCount = totalWords
+        
+        if actualWordCount < expectedWordCount {
+            #if DEBUG
+            print("[GoalService] ⚠️ 数据不一致：实际获取 \(actualWordCount) 个单词，但词库声明 \(expectedWordCount) 个")
+            #endif
+            
+            // 如果缺失过多（超过 20%），抛出错误
+            let missingRatio = Double(expectedWordCount - actualWordCount) / Double(expectedWordCount)
+            if missingRatio > 0.2 {
+                throw NSError(
+                    domain: "GoalService",
+                    code: 2001,
+                    userInfo: [
+                        NSLocalizedDescriptionKey: "词库数据不完整：实际可用 \(actualWordCount) 个单词，但词库声明 \(expectedWordCount) 个（缺失 \(String(format: "%.1f", missingRatio * 100))%）"
+                    ]
+                )
+            }
+            
+            // 如果缺失在可接受范围内，调整目标的总词数
+            #if DEBUG
+            print("[GoalService] 调整目标总词数：\(expectedWordCount) → \(actualWordCount)")
+            #endif
+        }
+        
+        // 4. 使用实际单词数计算计划参数
+        let actualTotalWords = shuffledWords.count
         let calculation = calculatePlan(
-            totalWords: totalWords,
+            totalWords: actualTotalWords,
             plan: plan
         )
         
-        // 2. 创建学习目标
+        // 5. 创建学习目标（使用实际单词数）
         let goal = LearningGoal(
             id: generateGoalId(),
             packId: packId,
             packName: packName,
-            totalWords: totalWords,
+            totalWords: actualTotalWords,  // ⭐ 使用实际单词数
             durationDays: plan.durationDays,
             dailyNewWords: calculation.dailyNewWords,
             startDate: calculation.startDate,
@@ -55,20 +91,17 @@ class GoalService {
             completedExposures: 0
         )
         
-        // 3. 保存目标
+        // 6. 保存目标
         _ = try goalStorage.insert(goal)
         
         #if DEBUG
-        print("[GoalService] ✅ 目标已保存: id=\(goal.id)")
+        print("[GoalService] ✅ 目标已保存: id=\(goal.id), totalWords=\(actualTotalWords)")
         #endif
         
-        // 4. 获取词库的单词ID列表
-        let packEntries = try getPackEntries(packId: packId)
-        
-        // 5. 生成所有任务（异步，不阻塞UI）
+        // 7. 生成所有任务（异步，不阻塞UI）
         Task {
             do {
-                try await generateAllTasks(for: goal, packEntries: packEntries, plan: plan)
+                try await generateAllTasks(for: goal, shuffledWords: shuffledWords)
                 #if DEBUG
                 print("[GoalService] ✅ 所有任务已生成")
                 #endif
@@ -79,12 +112,11 @@ class GoalService {
             }
         }
         
-        // 6. 立即生成今日任务（同步，确保可以立即学习）
+        // 8. 立即生成今日任务（同步，确保可以立即学习）
         let todayTask = try generateTodayTask(
             for: goal,
             day: 1,
-            packEntries: packEntries,
-            plan: plan
+            shuffledWords: shuffledWords
         )
         _ = try taskStorage.insert(todayTask)
         
@@ -98,15 +130,27 @@ class GoalService {
     // MARK: - 放弃目标
     
     /// 放弃当前学习目标
+    /// - Note: 由于 LearningGoal 的 endDate 是 let 常量，需要创建新实例
     func abandonGoal(_ goal: LearningGoal) throws {
         #if DEBUG
         print("[GoalService] 放弃学习目标: id=\(goal.id), pack=\(goal.packName)")
         #endif
         
-        // 1. 更新目标状态为已放弃
-        var updatedGoal = goal
-        updatedGoal.status = .abandoned
-        updatedGoal.endDate = Date()
+        // 1. 创建更新后的目标（endDate 是 let，需要创建新实例）
+        let updatedGoal = LearningGoal(
+            id: goal.id,
+            packId: goal.packId,
+            packName: goal.packName,
+            totalWords: goal.totalWords,
+            durationDays: goal.durationDays,
+            dailyNewWords: goal.dailyNewWords,
+            startDate: goal.startDate,
+            endDate: Date(),  // 更新为当前日期
+            status: .abandoned,  // 更新状态
+            currentDay: goal.currentDay,
+            completedWords: goal.completedWords,
+            completedExposures: goal.completedExposures
+        )
         
         // 2. 保存到数据库
         try goalStorage.update(updatedGoal)
@@ -115,8 +159,20 @@ class GoalService {
         if let task = try? taskStorage.fetchToday(),
            task.goalId == goal.id,
            task.status == .inProgress {
-            var updatedTask = task
-            updatedTask.status = .pending  // 标记为待开始，而不是删除
+            // 创建更新后的任务
+            let updatedTask = DailyTask(
+                id: task.id,
+                goalId: task.goalId,
+                day: task.day,
+                date: task.date,
+                newWords: task.newWords,
+                reviewWords: task.reviewWords,
+                totalExposures: task.totalExposures,
+                completedExposures: task.completedExposures,
+                status: .pending,  // 标记为待开始，而不是删除
+                startTime: task.startTime,
+                endTime: task.endTime
+            )
             try taskStorage.update(updatedTask)
         }
         
@@ -192,25 +248,49 @@ class GoalService {
     // MARK: - 任务生成
     
     /// 生成所有任务（异步）
+    /// - Note: 处理整数除法余数，确保所有单词都被分配
     private func generateAllTasks(
         for goal: LearningGoal,
-        packEntries: [Int],
-        plan: LearningPlan
+        shuffledWords: [Word]
     ) async throws {
         #if DEBUG
-        print("[GoalService] 开始生成所有任务: \(goal.durationDays) 天")
+        print("[GoalService] 开始生成所有任务: \(goal.durationDays) 天，共 \(shuffledWords.count) 个单词")
         #endif
         
-        // 获取所有单词
-        let allWords = try wordRepository.fetchWordsByIds(packEntries)
-        
-        // 算法分配单词顺序（目前是随机，后续可优化）
-        let shuffledWords = allWords.shuffled()
+        // ⭐ 修复：计算整数除法的余数，分配到前几天的任务中
+        let baseDailyNewWords = goal.dailyNewWords
+        let remainder = goal.totalWords % goal.durationDays
         
         // 按天分配新词
         for day in 1...goal.durationDays {
-            let startIndex = (day - 1) * goal.dailyNewWords
-            let endIndex = min(startIndex + goal.dailyNewWords, shuffledWords.count)
+            // ⭐ 修复：计算每日新词数（前 remainder 天会多分配1个词）
+            let dailyNewWordsForDay = baseDailyNewWords + (day <= remainder ? 1 : 0)
+            
+            // ⭐ 修复：计算累计索引（考虑余数分配）
+            var startIndex = 0
+            for d in 1..<day {
+                let wordsForDay = baseDailyNewWords + (d <= remainder ? 1 : 0)
+                startIndex += wordsForDay
+            }
+            
+            // ⭐ 修复：索引越界保护
+            guard startIndex < shuffledWords.count else {
+                #if DEBUG
+                print("[GoalService] ⚠️ 第 \(day) 天：startIndex(\(startIndex)) >= shuffledWords.count(\(shuffledWords.count))，跳过任务生成")
+                #endif
+                break  // 如果已经超出范围，停止生成后续任务
+            }
+            
+            let endIndex = min(startIndex + dailyNewWordsForDay, shuffledWords.count)
+            
+            // ⭐ 修复：确保 startIndex < endIndex
+            guard startIndex < endIndex else {
+                #if DEBUG
+                print("[GoalService] ⚠️ 第 \(day) 天：startIndex(\(startIndex)) >= endIndex(\(endIndex))，跳过任务生成")
+                #endif
+                break
+            }
+            
             let newWords = Array(shuffledWords[startIndex..<endIndex])
             
             // 计算复习词（基于遗忘曲线）
@@ -220,7 +300,8 @@ class GoalService {
                 previousNewWords: getPreviousNewWords(
                     days: Array(1..<day),
                     shuffledWords: shuffledWords,
-                    dailyNewWords: goal.dailyNewWords
+                    baseDailyNewWords: baseDailyNewWords,
+                    remainder: remainder
                 ),
                 reviewStrategy: .spacedRepetition
             )
@@ -261,37 +342,19 @@ class GoalService {
     }
     
     /// 生成今日任务（同步）
+    /// - Note: 第1天只生成新词，无复习词
     private func generateTodayTask(
         for goal: LearningGoal,
         day: Int,
-        packEntries: [Int],
-        plan: LearningPlan
+        shuffledWords: [Word]
     ) throws -> DailyTask {
-        // 获取所有单词
-        let allWords = try wordRepository.fetchWordsByIds(packEntries)
-        let shuffledWords = allWords.shuffled()
-        
-        // 计算新词
-        let startIndex = (day - 1) * goal.dailyNewWords
-        let endIndex = min(startIndex + goal.dailyNewWords, shuffledWords.count)
+        // 计算新词（第1天）
+        let startIndex = 0
+        let endIndex = min(goal.dailyNewWords, shuffledWords.count)
         let newWords = Array(shuffledWords[startIndex..<endIndex])
         
-        // 计算复习词（第1天无复习）
-        let reviewWords: [Word]
-        if day > 1 {
-            reviewWords = try calculateReviewWords(
-                currentDay: day,
-                goal: goal,
-                previousNewWords: getPreviousNewWords(
-                    days: Array(1..<day),
-                    shuffledWords: shuffledWords,
-                    dailyNewWords: goal.dailyNewWords
-                ),
-                reviewStrategy: .spacedRepetition
-            )
-        } else {
-            reviewWords = []
-        }
+        // 第1天无复习词
+        let reviewWords: [Word] = []
         
         // 计算曝光次数
         let newExposures = newWords.count * 10
@@ -371,16 +434,31 @@ class GoalService {
     }
     
     /// 获取之前几天的新词
+    /// - Note: 考虑整数除法余数分配
     private func getPreviousNewWords(
         days: [Int],
         shuffledWords: [Word],
-        dailyNewWords: Int
+        baseDailyNewWords: Int,
+        remainder: Int
     ) -> [Int: [Word]] {
         var result: [Int: [Word]] = [:]
         
         for day in days {
-            let startIndex = (day - 1) * dailyNewWords
-            let endIndex = min(startIndex + dailyNewWords, shuffledWords.count)
+            // 计算每日新词数（前 remainder 天会多分配1个词）
+            let dailyNewWordsForDay = baseDailyNewWords + (day <= remainder ? 1 : 0)
+            
+            // 计算累计索引
+            var startIndex = 0
+            for d in 1..<day {
+                let wordsForDay = baseDailyNewWords + (d <= remainder ? 1 : 0)
+                startIndex += wordsForDay
+            }
+            
+            guard startIndex < shuffledWords.count else { continue }
+            
+            let endIndex = min(startIndex + dailyNewWordsForDay, shuffledWords.count)
+            guard startIndex < endIndex else { continue }
+            
             result[day] = Array(shuffledWords[startIndex..<endIndex])
         }
         
@@ -390,23 +468,43 @@ class GoalService {
     // MARK: - 辅助方法
     
     /// 获取词库的单词ID列表
-    private func getPackEntries(packId: Int) throws -> [Int] {
+    /// - Parameter packId: 词库ID
+    /// - Parameter expectedCount: 期望的单词数量（用于验证）
+    /// - Returns: 单词ID列表
+    private func getPackEntries(packId: Int, expectedCount: Int) throws -> [Int] {
         // 从数据库获取词库的单词ID列表
         let packs = try packStorage.fetchAll()
         
         if let pack = packs.first(where: { $0.packId == packId }) {
             // 如果词库有 entries 字段，直接返回
             if !pack.entries.isEmpty {
+                #if DEBUG
+                print("[GoalService] 使用数据库中的 entries: \(pack.entries.count) 个ID")
+                #endif
                 return pack.entries
             }
             
-            // 否则，从 WordRepository 获取该词库的所有单词ID
-            // TODO: 实现从 WordRepository 根据 packId 获取单词ID列表
-            // 暂时返回示例数据
+            // 否则，从 WordRepository 获取实际可用的单词ID
             #if DEBUG
-            print("[GoalService] ⚠️ 词库 \(packId) 没有 entries，使用临时数据")
+            print("[GoalService] 词库 \(packId) 没有 entries，从 WordRepository 获取实际可用的单词ID")
             #endif
-            return Array(1...pack.totalCount)
+            
+            let allAvailableIds = try wordRepository.getAllWordIds()
+            
+            if allAvailableIds.count >= expectedCount {
+                // 如果可用单词数足够，使用前 expectedCount 个
+                let entries = Array(allAvailableIds.prefix(expectedCount))
+                #if DEBUG
+                print("[GoalService] 从 WordRepository 获取前 \(expectedCount) 个ID（共 \(allAvailableIds.count) 个可用）")
+                #endif
+                return entries
+            } else {
+                // 如果可用单词数不足，使用所有可用的
+                #if DEBUG
+                print("[GoalService] ⚠️ 警告：可用单词数（\(allAvailableIds.count)）少于词库声明的数量（\(expectedCount)），使用所有可用单词")
+                #endif
+                return allAvailableIds
+            }
         }
         
         // 如果找不到词库，返回空数组

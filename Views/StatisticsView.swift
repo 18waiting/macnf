@@ -87,10 +87,15 @@ struct StatisticsView: View {
         return items
     }
     
+    @State private var showDetailedStatistics = false
+    @State private var showAnalytics = false
+    @State private var showHistory = false
+    
     var body: some View {
         NavigationView {
             ScrollView {
                 VStack(spacing: 20) {
+                    // 快速入口卡片
                     if summaries.isEmpty {
                         StatisticsPlaceholder(message: "暂无统计数据，开始学习后解锁")
                     } else {
@@ -101,12 +106,72 @@ struct StatisticsView: View {
                         }
                     }
                     
+                    // 详细统计入口
+                    if !summaries.isEmpty {
+                        StatisticsActionCard(
+                            icon: "chart.bar.fill",
+                            title: "详细统计",
+                            description: "查看完整的学习数据和趋势分析",
+                            color: .blue
+                        ) {
+                            showDetailedStatistics = true
+                        }
+                    }
+                    
+                    // 学习分析入口
+                    if !summaries.isEmpty {
+                        StatisticsActionCard(
+                            icon: "chart.line.uptrend.xyaxis",
+                            title: "学习分析",
+                            description: "查看学习曲线、时间分布和效率分析",
+                            color: .purple
+                        ) {
+                            showAnalytics = true
+                        }
+                    }
+                    
+                    // 学习历史入口
+                    StatisticsActionCard(
+                        icon: "clock.arrow.circlepath",
+                        title: "学习历史",
+                        description: "查看所有学习会话和详细记录",
+                        color: .orange
+                    ) {
+                        showHistory = true
+                    }
+                    
                     QuickTipsCard(tips: appState.dashboard.tips)
                 }
                 .padding(20)
             }
             .background(Color.gray.opacity(0.05))
             .navigationTitle("📊 学习统计")
+            .toolbar {
+                ToolbarItem(placement: .navigationBarTrailing) {
+                    Menu {
+                        Button(action: { showDetailedStatistics = true }) {
+                            Label("详细统计", systemImage: "chart.bar.fill")
+                        }
+                        Button(action: { showAnalytics = true }) {
+                            Label("学习分析", systemImage: "chart.line.uptrend.xyaxis")
+                        }
+                        Button(action: { showHistory = true }) {
+                            Label("学习历史", systemImage: "clock.arrow.circlepath")
+                        }
+                    } label: {
+                        Image(systemName: "ellipsis.circle")
+                    }
+                }
+            }
+            .sheet(isPresented: $showDetailedStatistics) {
+                StatisticsDashboardView()
+            }
+            .sheet(isPresented: $showAnalytics) {
+                AnalyticsView()
+            }
+            .sheet(isPresented: $showHistory) {
+                StudyHistoryView()
+            }
         }
         .sheet(item: Binding(
             get: { appState.activeStatisticDetail },
@@ -482,6 +547,51 @@ struct SuggestionItem: View {
                 .foregroundColor(.secondary)
                 .multilineTextAlignment(.leading)
         }
+    }
+}
+
+// MARK: - 统计操作卡片
+struct StatisticsActionCard: View {
+    let icon: String
+    let title: String
+    let description: String
+    let color: Color
+    let action: () -> Void
+    
+    var body: some View {
+        Button(action: action) {
+            HStack(spacing: 16) {
+                ZStack {
+                    Circle()
+                        .fill(color.opacity(0.12))
+                        .frame(width: 58, height: 58)
+                    Image(systemName: icon)
+                        .foregroundColor(color)
+                        .font(.title2)
+                }
+                
+                VStack(alignment: .leading, spacing: 6) {
+                    Text(title)
+                        .font(.headline)
+                        .foregroundColor(.primary)
+                    Text(description)
+                        .font(.caption)
+                        .foregroundColor(.secondary)
+                        .multilineTextAlignment(.leading)
+                }
+                
+                Spacer()
+                
+                Image(systemName: "chevron.right")
+                    .font(.body.weight(.semibold))
+                    .foregroundColor(.secondary)
+            }
+            .padding()
+            .background(Color.white)
+            .cornerRadius(18)
+            .shadow(color: .black.opacity(0.06), radius: 12, y: 6)
+        }
+        .buttonStyle(.plain)
     }
 }
 

@@ -190,8 +190,16 @@ struct LearningHomeView: View {
     }
     
     private func handleGoalSelection() {
-        appState.loadDemoDashboard()
+        // 目标创建后，关闭词库页面，自动开始学习
         showLibrary = false
+        
+        // 如果有活动目标，自动打开学习界面
+        if appState.hasActiveGoal {
+            // 延迟一点，确保 StudyViewModel 已经刷新
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.3) {
+                showStudyFlow = true
+            }
+        }
     }
 }
 

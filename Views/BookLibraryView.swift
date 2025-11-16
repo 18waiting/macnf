@@ -11,6 +11,7 @@ import SwiftUI
 // MARK: - 词库管理视图
 struct BookLibraryView: View {
     var onSelectPack: (() -> Void)? = nil
+    @Environment(\.dismiss) var dismiss
     @State private var showingAddPack = false
     @State private var showAbandonConfirmation = false
     @State private var pendingPack: LocalPackRecord? = nil
@@ -55,8 +56,15 @@ struct BookLibraryView: View {
             }
             .sheet(isPresented: $showPlanSelection) {
                 if let pack = pendingPack {
-                    PlanSelectionView(pack: pack)
-                        .environmentObject(appState)
+                    PlanSelectionView(
+                        pack: pack,
+                        onGoalCreated: {
+                            // 目标创建成功后，关闭词库页面，返回学习页面
+                            dismiss()
+                            onSelectPack?()
+                        }
+                    )
+                    .environmentObject(appState)
                 }
             }
             .overlay {
@@ -205,13 +213,13 @@ struct BookLibraryView: View {
         }
     }
     
-    /// 处理放弃目标
+    /// 处理放弃目标（使用 GoalService）
     private func handleAbandonGoal() {
         guard let goal = currentGoal else { return }
         
         do {
-            // 1. 放弃当前目标（直接实现，避免依赖 GoalService）
-            try abandonGoal(goal)
+            // 1. 使用 GoalService 放弃当前目标
+            try GoalService.shared.abandonGoal(goal)
             
             // 2. 清除应用状态
             appState.updateGoal(nil as LearningGoal?, task: nil as DailyTask?, report: nil as DailyReport?)
@@ -233,59 +241,6 @@ struct BookLibraryView: View {
             #endif
             // TODO: 显示错误提示
         }
-    }
-    
-    /// 放弃学习目标（独立实现）
-    private func abandonGoal(_ goal: LearningGoal) throws {
-        #if DEBUG
-        print("[BookLibraryView] 放弃学习目标: id=\(goal.id), pack=\(goal.packName)")
-        #endif
-        
-        // 1. 创建更新后的目标（endDate 是 let，需要创建新实例）
-        let updatedGoal = LearningGoal(
-            id: goal.id,
-            packId: goal.packId,
-            packName: goal.packName,
-            totalWords: goal.totalWords,
-            durationDays: goal.durationDays,
-            dailyNewWords: goal.dailyNewWords,
-            startDate: goal.startDate,
-            endDate: Date(),  // 更新为当前日期
-            status: .abandoned,  // 更新状态
-            currentDay: goal.currentDay,
-            completedWords: goal.completedWords,
-            completedExposures: goal.completedExposures
-        )
-        
-        // 2. 保存到数据库
-        let goalStorage = LearningGoalStorage()
-        try goalStorage.update(updatedGoal)
-        
-        // 3. 清理当前任务（如果有未完成的）
-        let taskStorage = DailyTaskStorage()
-        if let task = try? taskStorage.fetchToday(),
-           task.goalId == goal.id,
-           task.status == .inProgress {
-            // 创建更新后的任务
-            let updatedTask = DailyTask(
-                id: task.id,
-                goalId: task.goalId,
-                day: task.day,
-                date: task.date,
-                newWords: task.newWords,
-                reviewWords: task.reviewWords,
-                totalExposures: task.totalExposures,
-                completedExposures: task.completedExposures,
-                status: .pending,  // 标记为待开始，而不是删除
-                startTime: task.startTime,
-                endTime: task.endTime
-            )
-            try taskStorage.update(updatedTask)
-        }
-        
-        #if DEBUG
-        print("[BookLibraryView] ✅ 目标已放弃")
-        #endif
     }
 }
 

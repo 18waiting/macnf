@@ -580,6 +580,26 @@ class StudyViewModel: ObservableObject {
     
     // MARK: - Public Methods
     
+    /// 从数据库重新加载目标和任务（用于创建新目标后刷新）
+    func reloadFromDatabase() {
+        #if DEBUG
+        print("[ViewModel] 🔄 重新加载目标和任务...")
+        #endif
+        
+        // 重置初始化标记，允许重新加载
+        hasInitialized = false
+        
+        // 重新加载目标和任务
+        loadCurrentGoalAndTask()
+        
+        // 重新准备队列
+        setupDemoData()
+        
+        #if DEBUG
+        print("[ViewModel] ✅ 重新加载完成: queue=\(queue.count), initialTotalCount=\(initialTotalCount)")
+        #endif
+    }
+    
     /// 重置 ViewModel 状态（用于重置学习进度或重新开始）
     func reset() {
         #if DEBUG

@@ -17,7 +17,7 @@ import SwiftUI
 import Combine
 
 // MARK: - 主题模式枚举
-enum AppTheme: String, CaseIterable, Identifiable {
+enum AppTheme: String, Codable, CaseIterable, Identifiable {
     case system = "system"
     case light = "light"
     case dark = "dark"

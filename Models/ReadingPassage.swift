@@ -15,7 +15,7 @@ struct ReadingPassage: Identifiable, Codable {
     let targetWords: [String]        // 目标单词列表
     let targetWordIds: [Int]         // 目标单词ID列表
     let wordCount: Int               // 字数
-    let difficulty: DifficultyLevel  // 难度等级
+    let difficulty: PassageDifficultyLevel  // 难度等级
     let topic: Topic                 // 主题分类
     let createdAt: Date              // 创建时间
     var isFavorite: Bool             // 是否收藏
@@ -70,8 +70,8 @@ enum Topic: String, Codable, CaseIterable {
     }
 }
 
-// MARK: - 难度等级
-enum DifficultyLevel: String, Codable {
+// MARK: - 阅读短文难度等级
+enum PassageDifficultyLevel: String, Codable {
     case cet4 = "CET-4"
     case cet6 = "CET-6"
     case postgraduate = "考研"
