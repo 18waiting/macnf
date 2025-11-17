@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import Combine
 
 // MARK: - 学习路径主视图
 struct LearningPathView: View {
@@ -110,6 +111,7 @@ struct LearningPathView: View {
     }
     
     // MARK: - 当前里程碑卡片
+    @ViewBuilder
     private var currentMilestoneCard: some View {
         if let milestone = viewModel.path?.getCurrentMilestone() {
             VStack(alignment: .leading, spacing: 12) {
@@ -142,6 +144,27 @@ struct LearningPathView: View {
             .background(
                 LinearGradient(
                     colors: [Color.orange.opacity(0.1), Color.purple.opacity(0.1)],
+                    startPoint: .topLeading,
+                    endPoint: .bottomTrailing
+                )
+            )
+            .cornerRadius(12)
+        } else {
+            VStack(spacing: 12) {
+                Image(systemName: "flag.slash.circle")
+                    .font(.largeTitle)
+                    .foregroundColor(.secondary)
+                Text("暂无里程碑")
+                    .font(.headline)
+                Text("完成前置等级后将自动解锁新的里程碑。")
+                    .font(.caption)
+                    .foregroundColor(.secondary)
+            }
+            .padding()
+            .frame(maxWidth: .infinity)
+            .background(
+                LinearGradient(
+                    colors: [Color.gray.opacity(0.1), Color.gray.opacity(0.2)],
                     startPoint: .topLeading,
                     endPoint: .bottomTrailing
                 )
@@ -297,8 +320,45 @@ class LearningPathViewModel: ObservableObject {
     private let service = LearningPathService.shared
     
     func loadPath(packId: Int) {
-        // TODO: 从存储加载或创建学习路径
-        // path = loadFromStorage(packId: packId) ?? service.createLearningPath(packId: packId)
+        do {
+            // 1. 从数据库加载目标（用于计算进度）
+            let goalStorage = LearningGoalStorage()
+            let allGoals = try goalStorage.fetchAll()
+            let packGoals = allGoals.filter { $0.packId == packId }
+            
+            // 2. 计算已完成单词数
+            let completedWords = packGoals.reduce(0) { $0 + $1.completedWords }
+            let totalWords = packGoals.first?.totalWords ?? 0
+            
+            // 3. 创建或更新学习路径
+            var learningPath = service.createLearningPath(packId: packId, totalLevels: 10)
+            
+            // 4. 更新进度
+            if totalWords > 0 {
+                service.updateProgress(
+                    path: &learningPath,
+                    completedWords: completedWords,
+                    totalWords: totalWords
+                )
+            }
+            
+            path = learningPath
+            
+            #if DEBUG
+            print("[LearningPathViewModel] ✅ 路径加载完成:")
+            print("  - 词库ID: \(packId)")
+            print("  - 当前等级: \(learningPath.currentLevel)")
+            print("  - 已完成单词: \(completedWords)/\(totalWords)")
+            #endif
+            
+        } catch {
+            #if DEBUG
+            print("[LearningPathViewModel] ⚠️ 加载路径失败: \(error)")
+            #endif
+            
+            // 加载失败时创建默认路径
+            path = service.createLearningPath(packId: packId, totalLevels: 10)
+        }
     }
 }
 

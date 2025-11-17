@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import Combine
 
 // MARK: - 用户偏好设置视图
 struct UserPreferencesView: View {

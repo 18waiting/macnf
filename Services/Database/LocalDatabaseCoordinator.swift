@@ -22,30 +22,50 @@ actor LocalDatabaseCoordinator {
 
     func bootstrap(appState: AppState) async {
         do {
-            // 1. 播种 manifest 到数据库
+            // 1. 确保本地 manifest 已导入
             try ManifestSeeder.seedIfNeeded()
             
-            // 2. 播种演示数据（学习目标、任务等）
-            try DemoDataSeeder.seedDemoDataIfNeeded()
-            
-            // 3. 播种单词缓存（从 JSONL 加载）
-            try await DemoDataSeeder.seedWordCacheIfNeeded(limit: 500)
-            
-            // 4. 加载所有数据到内存快照
+            // 2. 加载所有数据到内存快照
             let snapshot = try loadSnapshot()
             
-            // 5. 更新到 AppState
+            // 3. 更新到 AppState
             await MainActor.run {
                 appState.updateLocalDatabase { local in
                     local = snapshot
                 }
                 
-                // 6. 同步当前目标和任务到 dashboard
+                // 4. 同步当前目标和任务到 dashboard
                 if let currentGoal = snapshot.goals.first(where: { $0.status == .inProgress }) {
                     let currentTask = snapshot.tasks.first(where: { $0.goalId == currentGoal.id && $0.status != .completed })
                     let latestReport = snapshot.reports.last
                     
                     appState.updateGoal(currentGoal, task: currentTask, report: latestReport)
+                } else {
+                    appState.updateGoal(nil, task: nil, report: nil)
+                }
+                
+                let activeGoalCount = snapshot.goals.filter { $0.status == .inProgress }.count
+                let completedWords = snapshot.goals.reduce(0) { $0 + $1.completedWords }
+                let pendingTasks = snapshot.tasks.filter { $0.status != .completed }.count
+                
+                let quickStats = [
+                    QuickStat(icon: "book.fill", label: "词书", value: "\(snapshot.packs.count)"),
+                    QuickStat(icon: "target", label: "进行中", value: "\(activeGoalCount)"),
+                    QuickStat(icon: "checkmark.circle", label: "已学词数", value: "\(completedWords)"),
+                    QuickStat(icon: "list.bullet", label: "待办任务", value: "\(pendingTasks)")
+                ]
+                appState.updateQuickStats(quickStats)
+                
+                if activeGoalCount == 0 {
+                    appState.updateTips([
+                        "挑选一个词库，立即生成学习计划",
+                        "支持导入 CSV/Excel，自建专属词库"
+                    ])
+                } else {
+                    appState.updateTips([
+                        "保持连续学习，巩固记忆",
+                        "可在词库页调整计划或切换目标"
+                    ])
                 }
                 
                 #if DEBUG

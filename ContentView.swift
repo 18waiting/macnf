@@ -167,7 +167,7 @@ final class AppState: ObservableObject {
     // 全局学习 ViewModel（避免每次创建新实例）
     let studyViewModel = StudyViewModel()
     
-    init(dashboard: DashboardSnapshot = .demo) {
+    init(dashboard: DashboardSnapshot = .empty) {
         self.dashboard = dashboard
         self.hasActiveGoal = dashboard.goal != nil
         self.activeStatisticDetail = nil
@@ -193,10 +193,6 @@ final class AppState: ObservableObject {
         dashboard = .empty
     }
     
-    func loadDemoDashboard() {
-        dashboard = .demo
-    }
-    
     func updateLocalDatabase(_ transform: (inout LocalDatabaseSnapshot) -> Void) {
         var snapshot = localDatabase
         transform(&snapshot)
@@ -208,7 +204,6 @@ struct ContentView: View {
     @State private var hasSeenWelcome = false
     @StateObject private var appState = AppState()
     @StateObject private var themeManager = ThemeManager.shared
-    @State private var didPreloadWords = false
     @State private var didBootstrapDatabase = false
     
     var body: some View {
@@ -219,7 +214,6 @@ struct ContentView: View {
                     .environmentObject(appState)
                     .task {
                         await bootstrapLocalDatabaseIfNeeded()
-                        await preloadWordDataIfNeeded()
                     }
             } else {
                 // 欢迎页
@@ -317,32 +311,6 @@ extension ContentView {
         guard !didBootstrapDatabase else { return }
         didBootstrapDatabase = true
         await LocalDatabaseCoordinator.shared.bootstrap(appState: appState)
-    }
-
-    private func preloadWordDataIfNeeded() async {
-        guard !didPreloadWords else { return }
-        didPreloadWords = true
-        do {
-            let cache = try await Task.detached(priority: .background) { () -> [Int: WordCacheRecord] in
-                try WordRepository.shared.preloadIfNeeded(limit: 400)
-                return WordRepository.shared.exportCacheRecords()
-            }.value
-            let slicesLoaded = max(1, (cache.count + 1999) / 2000)
-            await MainActor.run {
-                appState.updateLocalDatabase { snapshot in
-                    snapshot.wordCaches = cache
-                }
-                let stats = [
-                    QuickStat(icon: "book.fill", label: "词条缓存", value: "\(cache.count)"),
-                    QuickStat(icon: "square.stack.3d.up.fill", label: "切片", value: "\(slicesLoaded)")
-                ]
-                appState.updateQuickStats(stats)
-            }
-        } catch {
-            #if DEBUG
-            print("⚠️ 词汇预加载失败: \(error)")
-            #endif
-        }
     }
 }
 

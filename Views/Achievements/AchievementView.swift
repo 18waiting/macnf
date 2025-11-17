@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import Combine
 
 // MARK: - 成就系统主视图
 struct AchievementView: View {
@@ -303,9 +304,123 @@ class AchievementViewModel: ObservableObject {
     private let service = AchievementService.shared
     
     func load() {
-        // TODO: 从存储加载用户进度
-        // progress = loadFromStorage()
-        statistics = service.getAchievementStatistics(progress)
+        do {
+            // 1. 从数据库加载报告、任务、目标
+            let reportStorage = DailyReportStorage()
+            let taskStorage = DailyTaskStorage()
+            let goalStorage = LearningGoalStorage()
+            
+            let allReports = try reportStorage.fetchAll()
+            let allTasks = try taskStorage.fetchAll()
+            let allGoals = try goalStorage.fetchAll()
+            
+            // 2. 计算总学习时长（用于 XP 计算）
+            let totalStudyTime = allReports.reduce(0) { $0 + $1.studyDuration }
+            let totalWordsStudied = allReports.reduce(0) { $0 + $1.totalWordsStudied }
+            let totalSessions = allReports.count
+            
+            // 3. 计算 XP（基于学习时长和单词数）
+            // 每 1 分钟学习 = 10 XP，每 1 个单词 = 5 XP
+            let timeXP = Int(totalStudyTime / 60) * 10
+            let wordsXP = totalWordsStudied * 5
+            let totalXP = timeXP + wordsXP
+            
+            // 4. 计算等级（每 100 XP = 1 级）
+            let level = max(1, (totalXP / 100) + 1)
+            let xp = totalXP % 100
+            
+            // 5. 初始化 UserProgress
+            var userProgress = UserProgress.initial()
+            userProgress.totalXP = totalXP
+            userProgress.level = level
+            userProgress.xp = xp
+            
+            // 6. 构建 UserStatistics（用于更新成就）
+            let currentStreak = calculateCurrentStreak(tasks: allTasks)
+            let uniqueDates = Set(allTasks.map { Calendar.current.startOfDay(for: $0.date) })
+            let sortedDates = uniqueDates.sorted(by: >)
+            let longestStreak = calculateLongestStreak(sortedDates: sortedDates)
+            
+            var userStatistics = UserStatistics()
+            userStatistics.totalStudyTime = totalStudyTime
+            userStatistics.totalCardsStudied = totalWordsStudied
+            userStatistics.totalSessions = totalSessions
+            userStatistics.currentStreak = currentStreak
+            userStatistics.longestStreak = longestStreak
+            userStatistics.lastStudyDate = sortedDates.first
+            
+            // 7. 更新成就进度（使用 AchievementService）
+            service.updateAchievements(progress: &userProgress, statistics: userStatistics)
+            
+            progress = userProgress
+            statistics = service.getAchievementStatistics(progress)
+            
+            #if DEBUG
+            print("[AchievementViewModel] ✅ 数据加载完成:")
+            print("  - 总XP: \(totalXP)")
+            print("  - 等级: \(level)")
+            print("  - 已解锁成就: \(progress.unlockedAchievementsCount)")
+            #endif
+            
+        } catch {
+            #if DEBUG
+            print("[AchievementViewModel] ⚠️ 加载数据失败: \(error)")
+            #endif
+            
+            // 加载失败时使用初始值
+            progress = .initial()
+            statistics = service.getAchievementStatistics(progress)
+        }
+    }
+    
+    // MARK: - 辅助方法
+    
+    /// 计算当前连续学习天数
+    private func calculateCurrentStreak(tasks: [DailyTask]) -> Int {
+        let uniqueDates = Set(tasks.map { Calendar.current.startOfDay(for: $0.date) })
+        let sortedDates = uniqueDates.sorted(by: >)
+        
+        guard !sortedDates.isEmpty else { return 0 }
+        
+        let calendar = Calendar.current
+        var streak = 0
+        var expectedDate = calendar.startOfDay(for: Date())
+        
+        for date in sortedDates {
+            let dayDate = calendar.startOfDay(for: date)
+            if dayDate == expectedDate || dayDate == calendar.date(byAdding: .day, value: -1, to: expectedDate) {
+                streak += 1
+                expectedDate = calendar.date(byAdding: .day, value: -1, to: dayDate)!
+            } else {
+                break
+            }
+        }
+        
+        return streak
+    }
+    
+    /// 计算最长连续学习天数
+    private func calculateLongestStreak(sortedDates: [Date]) -> Int {
+        guard !sortedDates.isEmpty else { return 0 }
+        
+        let calendar = Calendar.current
+        var maxStreak = 0
+        var currentStreak = 1
+        
+        for i in 1..<sortedDates.count {
+            let prevDate = calendar.startOfDay(for: sortedDates[i - 1])
+            let currDate = calendar.startOfDay(for: sortedDates[i])
+            
+            if let daysDiff = calendar.dateComponents([.day], from: currDate, to: prevDate).day,
+               abs(daysDiff) == 1 {
+                currentStreak += 1
+            } else {
+                maxStreak = max(maxStreak, currentStreak)
+                currentStreak = 1
+            }
+        }
+        
+        return max(maxStreak, currentStreak)
     }
     
     func getAchievementsByCategory(_ category: AchievementCategory) -> [Achievement] {

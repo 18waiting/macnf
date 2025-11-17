@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import Combine
 
 // MARK: - 学习历史主视图
 struct StudyHistoryView: View {
@@ -311,8 +312,58 @@ class StudyHistoryViewModel: ObservableObject {
     }
     
     func load() {
-        // TODO: 从存储加载学习历史
-        // history = loadFromStorage()
+        do {
+            // 1. 从数据库加载报告、任务、目标
+            let reportStorage = DailyReportStorage()
+            let taskStorage = DailyTaskStorage()
+            let goalStorage = LearningGoalStorage()
+            
+            let allReports = try reportStorage.fetchAll()
+            let allTasks = try taskStorage.fetchAll()
+            let allGoals = try goalStorage.fetchAll()
+            
+            // 2. 从报告构建学习会话
+            var sessions: [StudySession] = []
+            for report in allReports {
+                let session = StudySession(
+                    id: UUID(),
+                    goalId: report.goalId,
+                    sessionType: .flashcards,
+                    startTime: report.reportDate
+                )
+                
+                var mutableSession = session
+                mutableSession.endTime = report.reportDate
+                mutableSession.cardsStudied = report.totalWordsStudied
+                mutableSession.correctCount = report.swipeRightCount
+                mutableSession.incorrectCount = report.swipeLeftCount
+                mutableSession.timeSpent = report.studyDuration
+                
+                sessions.append(mutableSession)
+            }
+            
+            // 3. 构建学习历史
+            history = StudyHistory(
+                sessions: sessions,
+                dailyReports: allReports,
+                goals: allGoals
+            )
+            
+            #if DEBUG
+            print("[StudyHistoryViewModel] ✅ 数据加载完成:")
+            print("  - 会话数: \(sessions.count)")
+            print("  - 报告数: \(allReports.count)")
+            print("  - 目标数: \(allGoals.count)")
+            #endif
+            
+        } catch {
+            #if DEBUG
+            print("[StudyHistoryViewModel] ⚠️ 加载数据失败: \(error)")
+            #endif
+            
+            // 加载失败时使用空数据
+            history = .empty
+        }
     }
     
     private func getSessionsForDateRange(_ range: DateRange) -> [StudySession] {

@@ -94,8 +94,6 @@ struct ProfileView: View {
     
     // MARK: - 子视图
     
-    @StateObject private var statisticsViewModel = StatisticsViewModel()
-    
     private var profileCard: some View {
         VStack(spacing: 16) {
             // 头像和昵称

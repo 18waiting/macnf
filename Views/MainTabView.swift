@@ -21,9 +21,7 @@ struct MainTabView: View {
                 }
                 .tag(0)
             
-            BookLibraryView(onSelectPack: {
-                appState.loadDemoDashboard()
-            })
+            BookLibraryView()
             .tabItem {
                 Label("词库", systemImage: "books.vertical.fill")
             }

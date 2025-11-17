@@ -80,16 +80,16 @@ final class DatabaseResetService {
         #endif
     }
     
-    // MARK: - 重置后重新播种演示数据
+    // MARK: - 重置后重新准备数据
     func resetAndReseed() throws {
         // 1. 重置进度
         try resetProgress()
         
-        // 2. 重新播种演示数据
-        try DemoDataSeeder.seedDemoDataIfNeeded()
+        // 2. 重新导入词书 manifest（若被清空）
+        try ManifestSeeder.seedIfNeeded()
         
         #if DEBUG
-        print("🌱 重置并重新播种完成！")
+        print("🌱 重置完成，词书数据已重新导入。等待用户重新创建学习目标。")
         #endif
     }
     

@@ -7,6 +7,7 @@
 //
 
 import SwiftUI
+import Combine
 
 // MARK: - 学习分析主视图
 struct AnalyticsView: View {
@@ -279,10 +280,124 @@ class AnalyticsViewModel: ObservableObject {
     private let service = AnalyticsService.shared
     
     func load() {
-        // TODO: 从存储加载会话和历史记录
-        // let sessions = loadSessions()
-        // let records = loadRecords()
-        // analytics = calculateAnalytics(sessions: sessions, records: records)
+        do {
+            // 1. 从数据库加载报告和任务（用于构建会话）
+            let reportStorage = DailyReportStorage()
+            let taskStorage = DailyTaskStorage()
+            
+            let allReports = try reportStorage.fetchAll()
+            let allTasks = try taskStorage.fetchAll()
+            
+            // 2. 从报告构建学习会话
+            var sessions: [StudySession] = []
+            for report in allReports {
+                let session = StudySession(
+                    id: UUID(),
+                    goalId: report.goalId,
+                    sessionType: .flashcards,
+                    startTime: report.reportDate
+                )
+                
+                var mutableSession = session
+                mutableSession.endTime = report.reportDate
+                mutableSession.cardsStudied = report.totalWordsStudied
+                mutableSession.correctCount = report.swipeRightCount
+                mutableSession.incorrectCount = report.swipeLeftCount
+                mutableSession.timeSpent = report.studyDuration
+                
+                sessions.append(mutableSession)
+            }
+            
+            // 3. 使用 AnalyticsService 计算分析数据
+            let learningCurve = service.calculateLearningCurve(sessions: sessions)
+            let timeDistribution = service.calculateTimeDistribution(sessions: sessions)
+            let peakHours = service.calculatePeakHours(distribution: timeDistribution)
+            let efficiencyScore = service.calculateEfficiencyScore(sessions: sessions)
+            
+            // 4. 计算遗忘曲线（基于报告数据）
+            let forgettingCurve = calculateForgettingCurve(reports: allReports)
+            
+            // 5. 构建分析数据
+            analytics = LearningAnalytics(
+                studyTimeDistribution: timeDistribution,
+                weeklyStudyTime: calculateWeeklyStudyTime(sessions: sessions),
+                monthlyStudyTime: calculateMonthlyStudyTime(sessions: sessions),
+                learningCurve: learningCurve,
+                forgettingCurve: forgettingCurve,
+                efficiencyScore: efficiencyScore,
+                peakStudyHours: peakHours,
+                difficultyTrend: []
+            )
+            
+            #if DEBUG
+            print("[AnalyticsViewModel] ✅ 数据加载完成:")
+            print("  - 会话数: \(sessions.count)")
+            print("  - 效率分数: \(Int(efficiencyScore))")
+            print("  - 学习曲线点数: \(learningCurve.count)")
+            #endif
+            
+        } catch {
+            #if DEBUG
+            print("[AnalyticsViewModel] ⚠️ 加载数据失败: \(error)")
+            #endif
+            
+            // 加载失败时使用空数据
+            analytics = .empty
+        }
+    }
+    
+    // MARK: - 辅助方法
+    
+    /// 计算遗忘曲线
+    private func calculateForgettingCurve(reports: [DailyReport]) -> [ForgettingCurvePoint] {
+        guard !reports.isEmpty else { return [] }
+        
+        // 按日期排序
+        let sortedReports = reports.sorted { $0.reportDate < $1.reportDate }
+        
+        // 计算每日的掌握率（基于熟悉单词比例）
+        var points: [ForgettingCurvePoint] = []
+        let calendar = Calendar.current
+        
+        for (index, report) in sortedReports.enumerated() {
+            let daysSinceStart = calendar.dateComponents([.day], from: sortedReports[0].reportDate, to: report.reportDate).day ?? 0
+            let retentionRate = report.masteryRate
+            
+            points.append(ForgettingCurvePoint(
+                daysSinceLearning: daysSinceStart,
+                retentionRate: retentionRate,
+                reviewCount: report.totalExposures
+            ))
+        }
+        
+        return points
+    }
+    
+    /// 计算周学习时长
+    private func calculateWeeklyStudyTime(sessions: [StudySession]) -> TimeInterval {
+        let calendar = Calendar.current
+        let now = Date()
+        guard let weekStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now)) else {
+            return 0
+        }
+        
+        return sessions
+            .filter { $0.startTime >= weekStart }
+            .reduce(0) { $0 + $1.timeSpent }
+    }
+    
+    /// 计算月学习时长
+    private func calculateMonthlyStudyTime(sessions: [StudySession]) -> TimeInterval {
+        let calendar = Calendar.current
+        let now = Date()
+        let components = calendar.dateComponents([.year, .month], from: now)
+        guard let monthStart = calendar.date(from: components) else {
+            return 0
+        }
+        
+        return sessions
+            .filter { $0.startTime >= monthStart }
+            .reduce(0) { $0 + $1.timeSpent }
     }
 }
 

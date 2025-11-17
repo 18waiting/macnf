@@ -15,13 +15,23 @@ final class WordRepository {
     private var wordCache: [Int: Word] = [:]
     private var cacheRecords: [Int: WordCacheRecord] = [:]
     private var allWordIds: [Int] = []
+    private var hasLoadedAllWords = false
     private let lock = NSLock()
     
     private init() {}
     
     // MARK: - Public API
     func preloadIfNeeded(limit: Int? = nil) throws {
-        if !wordCache.isEmpty { return }
+        lock.lock()
+        let shouldSkip: Bool
+        if let limit = limit {
+            shouldSkip = hasLoadedAllWords || wordCache.count >= limit
+        } else {
+            shouldSkip = hasLoadedAllWords
+        }
+        lock.unlock()
+        
+        if shouldSkip { return }
         try loadWordsIntoCache(limit: limit)
     }
     
@@ -296,6 +306,8 @@ final class WordRepository {
             print("[Repository] Sample: \(sampleWords.joined(separator: ", "))")
         }
         #endif
+        
+        hasLoadedAllWords = (limit == nil)
     }
 }
 
