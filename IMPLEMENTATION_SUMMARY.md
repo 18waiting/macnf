@@ -128,7 +128,6 @@
 - `calculateLearningCurve()` - 计算学习曲线
 - `calculateTimeDistribution()` - 计算时间分布
 - `calculateEfficiencyScore()` - 计算效率分数
-- `calculateForgettingCurve()` - 计算遗忘曲线
 
 ---
 

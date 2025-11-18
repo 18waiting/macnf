@@ -129,7 +129,6 @@
 **可复用组件**：
 - `LearningCurveChart` - 学习曲线图表
 - `TimeDistributionChart` - 时间分布图表
-- `ForgettingCurveChart` - 遗忘曲线图表
 - `EmptyChartView` - 空图表视图
 
 **代码行数**：约 400 行
@@ -199,7 +198,6 @@
 ### 图表组件
 7. `LearningCurveChart` - 学习曲线图表
 8. `TimeDistributionChart` - 时间分布图表
-9. `ForgettingCurveChart` - 遗忘曲线图表
 10. `EmptyChartView` - 空图表视图
 
 ### 交互组件

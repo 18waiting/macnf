@@ -25,9 +25,6 @@ struct AnalyticsView: View {
                     
                     // 时间分布
                     timeDistributionSection
-                    
-                    // 遗忘曲线
-                    forgettingCurveSection
                 }
                 .padding()
             }
@@ -130,24 +127,6 @@ struct AnalyticsView: View {
         }
     }
     
-    // MARK: - 遗忘曲线部分
-    private var forgettingCurveSection: some View {
-        VStack(alignment: .leading, spacing: 16) {
-            Text("遗忘曲线")
-                .font(.headline)
-            
-            if !viewModel.analytics.forgettingCurve.isEmpty {
-                ForgettingCurveChart(points: viewModel.analytics.forgettingCurve)
-                    .frame(height: 200)
-                    .padding()
-                    .background(Color(.systemBackground))
-                    .cornerRadius(12)
-                    .shadow(color: .black.opacity(0.05), radius: 5)
-            } else {
-                EmptyChartView(message: "暂无遗忘曲线数据")
-            }
-        }
-    }
     
     // MARK: - 计算属性
     private var efficiencyColor: Color {
@@ -226,31 +205,6 @@ struct TimeDistributionChart: View {
     }
 }
 
-// MARK: - 遗忘曲线图表
-struct ForgettingCurveChart: View {
-    let points: [ForgettingCurvePoint]
-    
-    var body: some View {
-        GeometryReader { geometry in
-            let maxDays = points.map { $0.daysSinceLearning }.max() ?? 1
-            
-            Path { path in
-                for (index, point) in points.enumerated() {
-                    let x = CGFloat(point.daysSinceLearning) / CGFloat(maxDays) * geometry.size.width
-                    let y = (1 - CGFloat(point.retentionRate)) * geometry.size.height
-                    
-                    if index == 0 {
-                        path.move(to: CGPoint(x: x, y: y))
-                    } else {
-                        path.addLine(to: CGPoint(x: x, y: y))
-                    }
-                }
-            }
-            .stroke(Color.orange, lineWidth: 3)
-        }
-    }
-}
-
 // MARK: - 空图表视图
 struct EmptyChartView: View {
     let message: String
@@ -314,19 +268,15 @@ class AnalyticsViewModel: ObservableObject {
             let peakHours = service.calculatePeakHours(distribution: timeDistribution)
             let efficiencyScore = service.calculateEfficiencyScore(sessions: sessions)
             
-            // 4. 计算遗忘曲线（基于报告数据）
-            let forgettingCurve = calculateForgettingCurve(reports: allReports)
-            
-            // 5. 构建分析数据
+            // 4. 构建分析数据
             analytics = LearningAnalytics(
                 studyTimeDistribution: timeDistribution,
                 weeklyStudyTime: calculateWeeklyStudyTime(sessions: sessions),
                 monthlyStudyTime: calculateMonthlyStudyTime(sessions: sessions),
                 learningCurve: learningCurve,
-                forgettingCurve: forgettingCurve,
                 efficiencyScore: efficiencyScore,
                 peakStudyHours: peakHours,
-                difficultyTrend: []
+                difficultyTrend: [:]
             )
             
             #if DEBUG
@@ -348,56 +298,33 @@ class AnalyticsViewModel: ObservableObject {
     
     // MARK: - 辅助方法
     
-    /// 计算遗忘曲线
-    private func calculateForgettingCurve(reports: [DailyReport]) -> [ForgettingCurvePoint] {
-        guard !reports.isEmpty else { return [] }
-        
-        // 按日期排序
-        let sortedReports = reports.sorted { $0.reportDate < $1.reportDate }
-        
-        // 计算每日的掌握率（基于熟悉单词比例）
-        var points: [ForgettingCurvePoint] = []
+    /// 计算周学习时长（按周分组）
+    private func calculateWeeklyStudyTime(sessions: [StudySession]) -> [Date: TimeInterval] {
         let calendar = Calendar.current
+        var weeklyTime: [Date: TimeInterval] = [:]
         
-        for (index, report) in sortedReports.enumerated() {
-            let daysSinceStart = calendar.dateComponents([.day], from: sortedReports[0].reportDate, to: report.reportDate).day ?? 0
-            let retentionRate = report.masteryRate
-            
-            points.append(ForgettingCurvePoint(
-                daysSinceLearning: daysSinceStart,
-                retentionRate: retentionRate,
-                reviewCount: report.totalExposures
-            ))
+        for session in sessions {
+            // 获取该会话所在周的起始日期
+            let weekStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: session.startTime)) ?? session.startTime
+            weeklyTime[weekStart, default: 0] += session.timeSpent
         }
         
-        return points
+        return weeklyTime
     }
     
-    /// 计算周学习时长
-    private func calculateWeeklyStudyTime(sessions: [StudySession]) -> TimeInterval {
+    /// 计算月学习时长（按月分组）
+    private func calculateMonthlyStudyTime(sessions: [StudySession]) -> [Date: TimeInterval] {
         let calendar = Calendar.current
-        let now = Date()
-        guard let weekStart = calendar.date(from: calendar.dateComponents([.yearForWeekOfYear, .weekOfYear], from: now)) else {
-            return 0
+        var monthlyTime: [Date: TimeInterval] = [:]
+        
+        for session in sessions {
+            // 获取该会话所在月的起始日期
+            let components = calendar.dateComponents([.year, .month], from: session.startTime)
+            let monthStart = calendar.date(from: components) ?? session.startTime
+            monthlyTime[monthStart, default: 0] += session.timeSpent
         }
         
-        return sessions
-            .filter { $0.startTime >= weekStart }
-            .reduce(0) { $0 + $1.timeSpent }
-    }
-    
-    /// 计算月学习时长
-    private func calculateMonthlyStudyTime(sessions: [StudySession]) -> TimeInterval {
-        let calendar = Calendar.current
-        let now = Date()
-        let components = calendar.dateComponents([.year, .month], from: now)
-        guard let monthStart = calendar.date(from: components) else {
-            return 0
-        }
-        
-        return sessions
-            .filter { $0.startTime >= monthStart }
-            .reduce(0) { $0 + $1.timeSpent }
+        return monthlyTime
     }
 }
 

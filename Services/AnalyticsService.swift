@@ -121,42 +121,5 @@ final class AnalyticsService {
         
         return accuracyScore + continuityScore + timeScore
     }
-    
-    // MARK: - 遗忘曲线计算
-    
-    /// 计算遗忘曲线
-    /// - Parameter records: 学习记录字典
-    /// - Returns: 遗忘曲线数据点
-    func calculateForgettingCurve(
-        records: [Int: WordLearningRecord]
-    ) -> [ForgettingCurvePoint] {
-        var curveData: [Int: (total: Int, remembered: Int)] = [:]
-        
-        for record in records.values {
-            guard let firstLearned = record.firstLearnedDate else { continue }
-            let daysSince = Calendar.current.dateComponents(
-                [.day],
-                from: firstLearned,
-                to: Date()
-            ).day ?? 0
-            
-            let isRemembered = record.masteryLevel != .beginner && record.lapses == 0
-            
-            let current = curveData[daysSince] ?? (total: 0, remembered: 0)
-            curveData[daysSince] = (
-                total: current.total + 1,
-                remembered: current.remembered + (isRemembered ? 1 : 0)
-            )
-        }
-        
-        return curveData.map { (days, data) in
-            let retentionRate = data.total > 0 ? Double(data.remembered) / Double(data.total) : 0.0
-            return ForgettingCurvePoint(
-                daysSinceLearning: days,
-                retentionRate: retentionRate,
-                reviewCount: data.total
-            )
-        }.sorted { $0.daysSinceLearning < $1.daysSinceLearning }
-    }
 }
 

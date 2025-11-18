@@ -403,7 +403,6 @@ struct UserProgress: Codable {
 | 特性 | 当前应用 | 商业软件 | 差距 |
 |------|---------|---------|------|
 | **学习曲线分析** | ❌ 无 | ✅ 可视化曲线 | 🔴 关键缺失 |
-| **遗忘曲线追踪** | ❌ 无 | ✅ 详细追踪 | 🔴 关键缺失 |
 | **学习效率分析** | ⚠️ 部分（dwellTime） | ✅ 多维度分析 | 🟡 需扩展 |
 | **学习时间分布** | ❌ 无 | ✅ 热力图 | 🔴 关键缺失 |
 | **单词难度分析** | ⚠️ 部分（WordSummary） | ✅ 详细分析 | 🟡 需扩展 |
@@ -416,7 +415,6 @@ struct LearningAnalytics {
     var weeklyStudyTime: [Date: TimeInterval]        // 按周分布
     var monthlyStudyTime: [Date: TimeInterval]      // 按月分布
     var learningCurve: [LearningCurvePoint]         // 学习曲线
-    var forgettingCurve: [ForgettingCurvePoint]     // 遗忘曲线
     var efficiencyScore: Double                    // 学习效率分数
     var peakStudyHours: [Int]                       // 最佳学习时段
     var difficultyTrend: [Date: Double]            // 难度趋势
@@ -427,12 +425,6 @@ struct LearningCurvePoint {
     let wordsLearned: Int
     let accuracy: Double
     let averageTime: TimeInterval
-}
-
-struct ForgettingCurvePoint {
-    let daysSinceLearning: Int
-    let retentionRate: Double
-    let reviewCount: Int
 }
 ```
 

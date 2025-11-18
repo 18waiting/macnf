@@ -26,9 +26,6 @@ struct LearningAnalytics: Codable {
     /// 学习曲线数据点
     var learningCurve: [LearningCurvePoint] = []
     
-    /// 遗忘曲线数据点
-    var forgettingCurve: [ForgettingCurvePoint] = []
-    
     // MARK: - 效率分析
     
     /// 学习效率分数（0-100）
@@ -79,26 +76,6 @@ struct LearningCurvePoint: Identifiable, Codable {
         self.wordsLearned = wordsLearned
         self.accuracy = accuracy
         self.averageTime = averageTime
-    }
-}
-
-// MARK: - 遗忘曲线数据点
-struct ForgettingCurvePoint: Identifiable, Codable {
-    let id: UUID
-    let daysSinceLearning: Int
-    let retentionRate: Double  // 保留率（0-1）
-    let reviewCount: Int
-    
-    init(
-        id: UUID = UUID(),
-        daysSinceLearning: Int,
-        retentionRate: Double,
-        reviewCount: Int
-    ) {
-        self.id = id
-        self.daysSinceLearning = daysSinceLearning
-        self.retentionRate = retentionRate
-        self.reviewCount = reviewCount
     }
 }
 
