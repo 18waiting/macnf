@@ -244,6 +244,9 @@ struct KolodaViewWrapper: UIViewRepresentable {
             context.coordinator.initialize(with: viewModel.initialTotalCount)
         }
         
+        // ⭐ 智能同步：初始化队列数量跟踪
+        context.coordinator.lastQueueCount = viewModel.queueCount
+        
         // 配置 KolodaView
         kolodaView.dataSource = context.coordinator
         kolodaView.delegate = context.coordinator
@@ -282,12 +285,36 @@ struct KolodaViewWrapper: UIViewRepresentable {
         // Koloda 索引直接对应队列索引：0 到 queueCount-1
         let currentQueueCount = viewModel.queueCount
         let currentKolodaIndex = uiView.currentCardIndex
+        let coordinator = context.coordinator
         
         // ⭐ 智能同步：检测索引超出范围（最常见的情况：提前掌握导致队列减少）
+        var needsSync = false
+        var syncReason = ""
+        
+        // 情况 1：索引超出范围（currentKolodaIndex >= queueCount）
         if currentQueueCount > 0 && currentKolodaIndex >= currentQueueCount {
+            needsSync = true
+            syncReason = "索引超出范围"
             #if DEBUG
             print("[KolodaViewWrapper] ⚠️ 检测到索引超出范围: currentKolodaIndex=\(currentKolodaIndex), queueCount=\(currentQueueCount)")
-            print("[KolodaViewWrapper] 🔄 智能同步：重置索引到队列第一张卡片")
+            #endif
+        }
+        
+        // 情况 2：索引滞后（提前掌握导致队列减少，但 Koloda 索引没有相应减少）
+        // 检测条件：队列减少了 && Koloda 索引 > 0（说明不是初始状态）
+        else if coordinator.lastQueueCount > currentQueueCount && currentKolodaIndex > 0 {
+            needsSync = true
+            syncReason = "索引滞后（提前掌握）"
+            #if DEBUG
+            print("[KolodaViewWrapper] ⚠️ 检测到索引滞后: lastQueueCount=\(coordinator.lastQueueCount), currentQueueCount=\(currentQueueCount), currentKolodaIndex=\(currentKolodaIndex)")
+            print("[KolodaViewWrapper]   原因：队列减少了 \(coordinator.lastQueueCount - currentQueueCount) 张，但 Koloda 索引只递增了 1")
+            #endif
+        }
+        
+        // 执行同步
+        if needsSync {
+            #if DEBUG
+            print("[KolodaViewWrapper] 🔄 智能同步：\(syncReason)，重置索引到队列第一张卡片")
             #endif
             
             // 重置索引，让 Koloda 从 0 开始（对应队列的第一张卡片）
@@ -297,9 +324,16 @@ struct KolodaViewWrapper: UIViewRepresentable {
             }
         }
         
+        // ⭐ 更新跟踪的队列数量（用于下次检测索引滞后）
+        coordinator.lastQueueCount = currentQueueCount
+        
         #if DEBUG
         if currentQueueCount > 0 {
-            print("[KolodaViewWrapper] 🔄 updateUIView: queueCount=\(currentQueueCount), currentKolodaIndex=\(currentKolodaIndex) ✅ 同步正常")
+            if needsSync {
+                print("[KolodaViewWrapper] 🔄 updateUIView: queueCount=\(currentQueueCount), currentKolodaIndex=\(currentKolodaIndex) → 0 (已同步)")
+            } else {
+                print("[KolodaViewWrapper] 🔄 updateUIView: queueCount=\(currentQueueCount), currentKolodaIndex=\(currentKolodaIndex) ✅ 同步正常")
+            }
         }
         #endif
     }
@@ -321,7 +355,11 @@ class KolodaCardsCoordinator: NSObject {
     
     // ⭐ 商业级优化：保留 initialTotalCount 仅用于进度显示
     // Koloda 索引现在直接对应队列索引，不需要偏移量映射
-    var initialTotalCount: Int = 0  // 初始总数（仅用于进度计算：completedCount / initialTotalCount）
+    var initialTotalCount: Int = 0  // 初始总数（仅用于进度计算：completedCount / initialTotalCount)
+    
+    // ⭐ 智能同步：跟踪上次的队列数量，用于检测索引滞后
+    // 注意：需要 internal 访问权限，以便 updateUIView 访问
+    var lastQueueCount: Int = 0
     
     // ⭐ P1 修复：视图重用池（业界最佳实践）
     private var cardViewPool: [WordCardUIView] = []
